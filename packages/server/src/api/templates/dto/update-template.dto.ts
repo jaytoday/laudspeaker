@@ -1,13 +1,21 @@
 import { Trim } from 'class-sanitizer';
 import {
+  IsArray,
   IsEmail,
   IsNotEmpty,
   IsObject,
   IsOptional,
   IsString,
   MaxLength,
+  ValidateNested,
 } from 'class-validator';
-import { TemplateType, WebhookData } from '../entities/template.entity';
+import {
+  PushBuilderData,
+  TemplateType,
+  WebhookData,
+} from '../entities/template.entity';
+import { Type } from 'class-transformer';
+import { PushBuilderDataDto } from './push.dto';
 
 export class UpdateTemplateDto {
   @Trim()
@@ -50,6 +58,13 @@ export class UpdateTemplateDto {
   @MaxLength(2000)
   public smsText?: string;
 
+  @IsOptional()
+  @IsObject()
+  // TODO: fix object error
+  // @ValidateNested()
+  // @Type(() => PushBuilderDataDto)
+  public pushObject?: PushBuilderDataDto;
+
   @IsObject()
   @IsOptional()
   public webhookData?: WebhookData;
@@ -57,4 +72,13 @@ export class UpdateTemplateDto {
   @IsObject()
   @IsOptional()
   public modalState?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsArray()
+  @Type(() => String)
+  customEvents?: string[];
+
+  @IsOptional()
+  @IsObject()
+  customFields?: Record<string, unknown>;
 }

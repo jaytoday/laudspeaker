@@ -1,4 +1,14 @@
+import { AttributeType } from "pages/PeopleImport/PeopleImport";
+import { ConnectedPushFirebasePlatforms } from "pages/PushSettings/PushSettings";
 import PlanType from "./PlanType";
+
+export interface UserPK {
+  _id: string;
+  key: string;
+  isArray: boolean;
+  type: AttributeType;
+  isPrimary: true;
+}
 
 export default interface Account {
   id: string;
@@ -35,4 +45,8 @@ export default interface Account {
   smsAccountSid?: string;
   smsAuthToken?: string;
   smsFrom?: string;
+  posthogSetupped: boolean;
+  javascriptSnippetSetupped: boolean;
+  pushPlatforms: ConnectedPushFirebasePlatforms;
+  pk?: UserPK;
 }

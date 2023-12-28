@@ -4,6 +4,7 @@ import {
   Logger,
   HttpException,
   forwardRef,
+  HttpStatus,
 } from '@nestjs/common';
 import { Correlation, CustomersService } from '../customers/customers.service';
 import { CustomerDocument } from '../customers/schemas/customer.schema';
@@ -15,14 +16,19 @@ import {
 import { Account } from '../accounts/entities/accounts.entity';
 import { PosthogBatchEventDto } from './dto/posthog-batch-event.dto';
 import { EventDto } from './dto/event.dto';
-import { AccountsService } from '../accounts/accounts.service';
-import { WorkflowsService } from '../workflows/workflows.service';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { StatusJobDto } from './dto/status-event.dto';
-import { Queue } from 'bullmq';
-import { InjectQueue } from '@nestjs/bullmq';
+import {
+  Processor,
+  WorkerHost,
+  OnWorkerEvent,
+  InjectQueue,
+} from '@nestjs/bullmq';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Job, Queue, UnrecoverableError } from 'bullmq';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import mongoose, { Model } from 'mongoose';
+import mongoose, { ClientSession, Model } from 'mongoose';
 import { EventDocument, Event } from './schemas/event.schema';
 import mockData from '../../fixtures/mockData';
 import { EventKeys, EventKeysDocument } from './schemas/event-keys.schema';
@@ -34,26 +40,33 @@ import {
   PosthogEventType,
   PosthogEventTypeDocument,
 } from './schemas/posthog-event-type.schema';
-import { WorkflowTick } from '../workflows/interfaces/workflow-tick.interface';
 import { DataSource } from 'typeorm';
 import posthogEventMappings from '../../fixtures/posthogEventMappings';
 import {
   PosthogEvent,
   PosthogEventDocument,
 } from './schemas/posthog-event.schema';
+import { JourneysService } from '../journeys/journeys.service';
+import admin from 'firebase-admin';
+import { Journey } from '../journeys/entities/journey.entity';
+import { CustomerPushTest } from './dto/customer-push-test.dto';
+import {
+  PlatformSettings,
+  PushPlatforms,
+} from '../templates/entities/template.entity';
 
 @Injectable()
 export class EventsService {
   constructor(
     private dataSource: DataSource,
-    @Inject(AccountsService) private readonly userService: AccountsService,
-    @Inject(forwardRef(() => WorkflowsService))
-    private readonly workflowsService: WorkflowsService,
     @Inject(forwardRef(() => CustomersService))
     private readonly customersService: CustomersService,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
     @InjectQueue('message') private readonly messageQueue: Queue,
+    @InjectQueue('events') private readonly eventQueue: Queue,
+    @InjectQueue('events_pre')
+    private readonly eventPreprocessorQueue: Queue,
     @InjectQueue(JobTypes.slack) private readonly slackQueue: Queue,
     @InjectQueue(JobTypes.events)
     private readonly eventsQueue: Queue,
@@ -63,10 +76,14 @@ export class EventsService {
     private PosthogEventModel: Model<PosthogEventDocument>,
     @InjectModel(EventKeys.name)
     private EventKeysModel: Model<EventKeysDocument>,
+    @InjectRepository(Account)
+    public accountsRepository: Repository<Account>,
     @InjectModel(PosthogEventType.name)
     private PosthogEventTypeModel: Model<PosthogEventTypeDocument>,
     @InjectConnection() private readonly connection: mongoose.Connection,
-    @InjectQueue('webhooks') private readonly webhooksQueue: Queue
+    @InjectQueue('webhooks') private readonly webhooksQueue: Queue,
+    @Inject(forwardRef(() => JourneysService))
+    private readonly journeysService: JourneysService
   ) {
     for (const { name, property_type } of defaultEventKeys) {
       if (name && property_type) {
@@ -193,29 +210,21 @@ export class EventsService {
     }
   }
 
-  async getPostHogPayload(
-    apiKey: string,
+  async posthogPayload(
+    account: Account,
     eventDto: PosthogBatchEventDto,
     session: string
   ) {
-    let account: Account, jobIds: WorkflowTick[]; // Account associated with the caller
-    let found: boolean;
-    const transactionSession = await this.connection.startSession();
-    transactionSession.startTransaction();
+    let err: any;
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
-    // Step 1: Find corresponding account
-    let jobArray: WorkflowTick[] = []; // created jobId
     try {
-      account = await this.userService.findOneByAPIKey(apiKey.substring(8));
-      this.debug(
-        `Found account: ${JSON.stringify({ id: account.id })}`,
-        this.getPostHogPayload.name,
-        session,
-        account.id
-      );
+      await queryRunner.manager.save(Account, {
+        id: account.id,
+        posthogSetupped: true,
+      });
 
       const chronologicalEvents: PostHogEventDto[] = eventDto.batch.sort(
         (a, b) =>
@@ -223,267 +232,39 @@ export class EventsService {
           new Date(b.originalTimestamp).getTime()
       );
 
-      this.debug(
-        `Sorted events: ${JSON.stringify({ events: chronologicalEvents })}`,
-        this.getPostHogPayload.name,
-        session,
-        account.id
-      );
-
       for (
         let numEvent = 0;
         numEvent < chronologicalEvents.length;
         numEvent++
       ) {
-        let postHogEvent = new PosthogEvent();
-        let err: Error | undefined;
-        try {
-          const currentEvent = chronologicalEvents[numEvent];
-          this.debug(
-            `Processing PostHog event: ${JSON.stringify({
-              event: currentEvent,
-            })}`,
-            this.getPostHogPayload.name,
-            session,
-            account.id
-          );
-
-          postHogEvent = {
-            ...postHogEvent,
-            name: currentEvent.event,
-            type: currentEvent.type,
-            payload: JSON.stringify(currentEvent, null, 2),
-            ownerId: account.id,
-          };
-
-          //update customer properties on every identify call as per best practice
-          if (currentEvent.type === 'identify') {
-            this.debug(
-              `Updating customer on Identify event: ${JSON.stringify({
-                event: currentEvent,
-              })}`,
-              this.getPostHogPayload.name,
-              session,
-              account.id
-            );
-            found = await this.customersService.phIdentifyUpdate(
-              account,
-              currentEvent,
-              transactionSession,
-              session
-            );
+        await this.eventPreprocessorQueue.add(
+          'posthog',
+          {
+            account: account,
+            event: eventDto,
+            session: session,
+          },
+          {
+            attempts: 10,
+            backoff: { delay: 1000, type: 'exponential' },
           }
-          //checking for a custom tracked posthog event here
-          if (
-            currentEvent.type === 'track' &&
-            currentEvent.event &&
-            currentEvent.event !== 'change' &&
-            currentEvent.event !== 'click' &&
-            currentEvent.event !== 'submit' &&
-            currentEvent.event !== '$pageleave' &&
-            currentEvent.event !== '$rageclick'
-          ) {
-            //checks to see if we have seen this event before (otherwise we update the events dropdown)
-            const found = await this.PosthogEventTypeModel.findOne({
-              name: currentEvent.event,
-              ownerId: account.id,
-            })
-              .session(transactionSession)
-              .exec();
-            this.debug(
-              `Check if event exists in events DB: ${JSON.stringify({
-                event: found,
-              })}`,
-              this.getPostHogPayload.name,
-              session,
-              account.id
-            );
-
-            if (!found) {
-              this.debug(
-                `Event does not exist, creating: ${JSON.stringify({
-                  event: {
-                    name: currentEvent.event,
-                    type: currentEvent.type,
-                    displayName: currentEvent.event,
-                    event: currentEvent.event,
-                    ownerId: account.id,
-                  },
-                })}`,
-                this.getPostHogPayload.name,
-                session,
-                account.id
-              );
-              const res = await this.PosthogEventTypeModel.create(
-                {
-                  name: currentEvent.event,
-                  type: currentEvent.type,
-                  displayName: currentEvent.event,
-                  event: currentEvent.event,
-                  ownerId: account.id,
-                },
-                { session: transactionSession }
-              );
-              this.debug(
-                `Added event to events DB: ${JSON.stringify({ event: res })}`,
-                this.getPostHogPayload.name,
-                session,
-                account.id
-              );
-            }
-            //TODO: check if the event sets props, if so we need to update the person traits
-          }
-
-          let jobIDs: WorkflowTick[] = [];
-          //Step 2: Create/Correlate customer for each eventTemplatesService.queueMessage
-          const postHogEventMapping = (event: any) => {
-            const cust = {};
-            if (event?.phPhoneNumber) {
-              cust['phPhoneNumber'] = event.phPhoneNumber;
-            }
-            if (event?.phEmail) {
-              cust['phEmail'] = event.phEmail;
-            }
-            if (event?.phDeviceToken) {
-              cust['phDeviceToken'] = event.phDeviceToken;
-            }
-            if (event?.phCustom) {
-              cust['phCustom'] = event.phCustom;
-            }
-            return cust;
-          };
-
-          const correlation = await this.customersService.findBySpecifiedEvent(
-            account,
-            'posthogId',
-            [currentEvent.userId, currentEvent.anonymousId],
-            currentEvent,
-            transactionSession,
-            session,
-            postHogEventMapping
-          );
-
-          if (!correlation.found || !found) {
-            await this.workflowsService.enrollCustomer(
-              account,
-              correlation.cust,
-              queryRunner,
-              transactionSession,
-              session
-            );
-          }
-          //need to change posthogeventdto to eventdo
-          const convertedEventDto: EventDto = {
-            correlationKey: 'posthogId',
-            correlationValue: [currentEvent.userId, currentEvent.anonymousId],
-            event: currentEvent.context,
-            source: 'posthog',
-            payload: {
-              type: currentEvent.type,
-              event: currentEvent.event,
-            },
-          };
-
-          //currentEvent
-          jobIDs = await this.workflowsService.tick(
-            account,
-            convertedEventDto,
-            queryRunner,
-            transactionSession,
-            session
-          );
-          this.debug(
-            `Queued messages ${JSON.stringify({ jobIDs: jobIDs })}`,
-            this.getPostHogPayload.name,
-            session,
-            account.id
-          );
-          jobArray = [...jobArray, ...jobIDs];
-        } catch (e) {
-          if (e instanceof Error) {
-            postHogEvent.errorMessage = e.message;
-            err = e;
-          }
-          this.error(e, this.getPostHogPayload.name, session, account.id);
-        } finally {
-          await this.PosthogEventModel.create(postHogEvent);
-        }
-        if (err) throw err;
+        );
       }
-
-      await transactionSession.commitTransaction();
-      await queryRunner.commitTransaction();
     } catch (e) {
-      await transactionSession.abortTransaction();
       await queryRunner.rollbackTransaction();
-      this.error(e, this.getPostHogPayload.name, session, account.id);
-      throw e;
+      err = e;
     } finally {
-      await transactionSession.endSession();
       await queryRunner.release();
+      if (err) throw err;
     }
-
-    return jobArray;
   }
 
-  async enginePayload(apiKey: string, eventDto: EventDto, session: string) {
-    let account: Account, correlation: Correlation, jobIDs: WorkflowTick[];
-
-    const transactionSession = await this.connection.startSession();
-    transactionSession.startTransaction();
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      account = await this.userService.findOneByAPIKey(apiKey.substring(8));
-      if (!account) this.logger.error('Account not found');
-      this.logger.debug('Found Account: ' + account.id);
-
-      correlation = await this.customersService.findOrCreateByCorrelationKVPair(
-        account,
-        eventDto,
-        transactionSession
-      );
-      this.logger.debug('Correlation result:' + correlation.cust);
-
-      if (!correlation.found)
-        await this.workflowsService.enrollCustomer(
-          account,
-          correlation.cust,
-          queryRunner,
-          transactionSession,
-          session
-        );
-
-      jobIDs = await this.workflowsService.tick(
-        account,
-        eventDto,
-        queryRunner,
-        transactionSession,
-        session
-      );
-      this.logger.debug('Queued messages with jobID ' + jobIDs);
-      if (eventDto) {
-        await this.EventModel.create({
-          ...eventDto,
-          ownerId: account.id,
-          createdAt: new Date().toUTCString(),
-        });
-      }
-
-      await transactionSession.commitTransaction();
-      await queryRunner.commitTransaction();
-    } catch (err) {
-      await transactionSession.abortTransaction();
-      await queryRunner.rollbackTransaction();
-      this.logger.error('Error: ' + err);
-      throw err;
-    } finally {
-      await transactionSession.endSession();
-      await queryRunner.release();
-    }
-    return jobIDs;
+  async customPayload(account: Account, eventDto: EventDto, session: string) {
+    await this.eventPreprocessorQueue.add('laudspeaker', {
+      account: account,
+      event: eventDto,
+      session: session,
+    });
   }
 
   async getOrUpdateAttributes(resourceId: string, session: string) {
@@ -605,5 +386,237 @@ export class EventsService {
       })),
       totalPages,
     };
+  }
+
+  //to do need to specify how this is
+  async getEventsByMongo(mongoQuery: any, customer: CustomerDocument) {
+    //console.log("In getEvents by mongo");
+
+    const tehevents = await this.EventModel.find(mongoQuery).exec();
+    //console.log("events are", JSON.stringify(tehevents, null, 2))
+
+    //console.log("events are", JSON.stringify(await this.EventModel.find(mongoQuery).exec(),null, 2));
+    const count = await this.EventModel.count(mongoQuery).exec();
+    //console.log("count is", count);
+    return count;
+  }
+
+  //to do need to specify how this is
+  async getCustomersbyEventsMongo(
+    aggregationPipeline: any
+    //externalId: boolean,
+    //numberOfTimes: Number,
+  ) {
+    //console.log("In getCustomersbyEventsMongo by mongo");
+
+    const docs = await this.EventModel.aggregate(aggregationPipeline).exec();
+
+    return docs;
+  }
+
+  async sendTestPush(account: Account, token: string) {
+    const foundAcc = await this.accountsRepository.findOneBy({
+      id: account.id,
+    });
+
+    const hasConnected = Object.values(foundAcc.pushPlatforms).some(
+      (el) => !!el
+    );
+
+    try {
+      if (!hasConnected) {
+        throw new HttpException(
+          "You don't have platform's connected",
+          HttpStatus.NOT_ACCEPTABLE
+        );
+      }
+
+      await Promise.all(
+        Object.keys(foundAcc.pushPlatforms)
+          .filter((el) => !!foundAcc.pushPlatforms[el])
+          .map(async (el) => {
+            if (foundAcc.pushPlatforms[el].credentials) {
+              let firebaseApp: admin.app.App;
+
+              try {
+                firebaseApp = admin.app(foundAcc.id + ';;' + el);
+              } catch (e: any) {
+                if (e.code == 'app/no-app') {
+                  firebaseApp = admin.initializeApp(
+                    {
+                      credential: admin.credential.cert(
+                        foundAcc.pushPlatforms[el].credentials
+                      ),
+                    },
+                    `${foundAcc.id};;${el}`
+                  );
+                } else {
+                  throw new HttpException(
+                    `Error while using credentials for ${el}.`,
+                    HttpStatus.FAILED_DEPENDENCY
+                  );
+                }
+              }
+
+              const messaging = admin.messaging(firebaseApp);
+
+              await messaging.send({
+                token: token,
+                notification: {
+                  title: `Laudspeaker ${el} test`,
+                  body: 'Testing push notifications',
+                },
+                android: {
+                  notification: {
+                    sound: 'default',
+                  },
+                },
+                apns: {
+                  payload: {
+                    aps: {
+                      badge: 1,
+                      sound: 'default',
+                    },
+                  },
+                },
+              });
+            }
+          })
+      );
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  async sendTestPushByCustomer(account: Account, body: CustomerPushTest) {
+    const foundAcc = await this.accountsRepository.findOneBy({
+      id: account.id,
+    });
+
+    const hasConnected = Object.values(foundAcc.pushPlatforms).some(
+      (el) => !!el
+    );
+
+    try {
+      if (!hasConnected) {
+        throw new HttpException(
+          "You don't have platform's connected",
+          HttpStatus.NOT_ACCEPTABLE
+        );
+      }
+
+      const customer = await this.customersService.findById(
+        account,
+        body.customerId
+      );
+
+      if (!customer.androidDeviceToken && !customer.iosDeviceToken) {
+        throw new HttpException(
+          "Selected customer don't have androidDeviceToken nor iosDeviceToken.",
+          HttpStatus.NOT_ACCEPTABLE
+        );
+      }
+
+      await Promise.all(
+        Object.entries(body.pushObject.platform)
+          .filter(
+            ([platform, isEnabled]) =>
+              isEnabled && foundAcc.pushPlatforms[platform]
+          )
+          .map(async ([platform]) => {
+            if (!foundAcc.pushPlatforms[platform]) {
+              throw new HttpException(
+                `Platform ${platform} is not connected.`,
+                HttpStatus.NOT_ACCEPTABLE
+              );
+            }
+
+            if (
+              platform === PushPlatforms.ANDROID &&
+              !customer.androidDeviceToken
+            ) {
+              this.logger.warn(
+                `Customer ${body.customerId} don't have androidDeviceToken property to test push notification. Skipping.`
+              );
+              return;
+            }
+
+            if (platform === PushPlatforms.IOS && !customer.iosDeviceToken) {
+              this.logger.warn(
+                `Customer ${body.customerId} don't have iosDeviceToken property to test push notification. Skipping.`
+              );
+              return;
+            }
+
+            const settings: PlatformSettings =
+              body.pushObject.settings[platform];
+            let firebaseApp;
+            try {
+              firebaseApp = admin.app(foundAcc.id + ';;' + platform);
+            } catch (e: any) {
+              if (e.code == 'app/no-app') {
+                firebaseApp = admin.initializeApp(
+                  {
+                    credential: admin.credential.cert(
+                      foundAcc.pushPlatforms[platform].credentials
+                    ),
+                  },
+                  `${foundAcc.id};;${platform}`
+                );
+              } else {
+                throw new HttpException(
+                  `Error while using credentials for ${platform}.`,
+                  HttpStatus.FAILED_DEPENDENCY
+                );
+              }
+            }
+
+            const messaging = admin.messaging(firebaseApp);
+
+            await messaging.send({
+              token:
+                platform === PushPlatforms.ANDROID
+                  ? customer.androidDeviceToken
+                  : customer.iosDeviceToken,
+              notification: {
+                title: settings.title,
+                body: settings.description,
+              },
+              android:
+                platform === PushPlatforms.ANDROID
+                  ? {
+                      notification: {
+                        sound: 'default',
+                        imageUrl: settings?.image?.imageSrc || '',
+                      },
+                    }
+                  : undefined,
+              apns:
+                platform === PushPlatforms.IOS
+                  ? {
+                      payload: {
+                        aps: {
+                          badge: 1,
+                          sound: 'default',
+                          'content-available': 1,
+                          category: settings.clickBehavior?.type,
+                          'mutable-content': 1,
+                        },
+                      },
+                      fcmOptions: {
+                        imageUrl: settings?.image?.imageSrc || '',
+                      },
+                    }
+                  : undefined,
+              data: body.pushObject.fields.reduce((acc, field) => {
+                acc[field.key] = field.value;
+                return acc;
+              }, {}),
+            });
+          })
+      );
+    } catch (e) {
+      throw e;
+    }
   }
 }

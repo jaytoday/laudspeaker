@@ -33,6 +33,15 @@ import {
   PosthogEvent,
   PosthogEventSchema,
 } from './schemas/posthog-event.schema';
+import { JourneysModule } from '../journeys/journeys.module';
+import { AudiencesHelper } from '../audiences/audiences.helper';
+import { SegmentsModule } from '../segments/segments.module';
+import { EventsPreProcessor } from './events.preprocessor';
+import { WebsocketsModule } from '@/websockets/websockets.module';
+import { RedlockModule } from '../redlock/redlock.module';
+import { RedlockService } from '../redlock/redlock.service';
+import { JourneyLocationsService } from '../journeys/journey-locations.service';
+import { JourneyLocation } from '../journeys/entities/journey-location.entity';
 
 @Module({
   imports: [
@@ -43,6 +52,7 @@ import {
       State,
       Template,
       Workflow,
+      JourneyLocation,
     ]),
     MongooseModule.forFeature([
       { name: Customer.name, schema: CustomerSchema },
@@ -65,18 +75,35 @@ import {
       name: 'events',
     }),
     BullModule.registerQueue({
+      name: 'events_pre',
+    }),
+    BullModule.registerQueue({
       name: 'webhooks',
+    }),
+    BullModule.registerQueue({
+      name: 'transition',
     }),
     forwardRef(() => AuthModule),
     forwardRef(() => CustomersModule),
     forwardRef(() => AccountsModule),
     forwardRef(() => TemplatesModule),
     forwardRef(() => WorkflowsModule),
+    forwardRef(() => JourneysModule),
+    forwardRef(() => SegmentsModule),
+    forwardRef(() => WebsocketsModule),
     AudiencesModule,
     SlackModule,
+    forwardRef(() => RedlockModule),
   ],
   controllers: [EventsController],
-  providers: [EventsService, EventsProcessor],
+  providers: [
+    EventsService,
+    EventsProcessor,
+    EventsPreProcessor,
+    AudiencesHelper,
+    RedlockService,
+    JourneyLocationsService,
+  ],
   exports: [EventsService],
 })
 export class EventsModule {}

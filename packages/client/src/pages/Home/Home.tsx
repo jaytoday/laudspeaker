@@ -1,5 +1,6 @@
 import Header from "components/Header";
 import Progress from "components/Progress";
+import config, { API_BASE_URL_KEY } from "config";
 import React, { DragEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -35,7 +36,7 @@ const Home = () => {
     setIsCSVLoading(true);
     try {
       const res = await fetch(
-        `${process.env.REACT_APP_API_BASE_URL}/customers/importcsv`,
+        `${config.get(API_BASE_URL_KEY)}/customers/importcsv`,
         {
           method: "POST",
           body: formData,
@@ -86,7 +87,6 @@ const Home = () => {
     <div>
       <div className="">
         <div className="mx-auto flex flex-col">
-          <Header />
           <main className="relative">
             {isCSVImportModalOpen && (
               <>
@@ -178,7 +178,7 @@ const Home = () => {
                 </div>
                 <div className="w-full bg-white flex flex-wrap rounded-md items-stretch justify-center mt-[80px]">
                   <div
-                    className="w-1/2 border-r-[1px] border-b-[1px] border-[#E8EAED] p-[20px] cursor-pointer hover:bg-gray-100"
+                    className="w-1/2 border-r-[1px] border-b-[1px] border-[#E8EAED] p-5 cursor-pointer hover:bg-gray-100"
                     onClick={() => navigate("/onboarding")}
                   >
                     <div className="h-[80px] flex justify-between items-start">
@@ -227,7 +227,7 @@ const Home = () => {
                     </div>
                   </div>
                   <div
-                    className="w-1/2 border-b-[1px] border-[#E8EAED] p-[20px] cursor-pointer hover:bg-gray-100"
+                    className="w-1/2 border-b-[1px] border-[#E8EAED] p-5 cursor-pointer hover:bg-gray-100"
                     onClick={() => navigate("/flow")}
                   >
                     <div className="h-[80px] flex justify-between items-start">
@@ -274,7 +274,7 @@ const Home = () => {
                     </div>
                   </div>
                   <div
-                    className="w-full border-r-[1px] border-b-[1px] border-[#E8EAED] p-[20px] cursor-pointer hover:bg-gray-100"
+                    className="w-full border-r-[1px] border-b-[1px] border-[#E8EAED] p-5 cursor-pointer hover:bg-gray-100"
                     onClick={() => navigate("/templates/modal/test_example")}
                   >
                     <div className="h-[80px] flex justify-between items-start">
@@ -321,7 +321,7 @@ const Home = () => {
                     </div>
                   </div>
                   <div
-                    className="w-full border-r-[1px] border-b-[1px] border-[#E8EAED] p-[20px] cursor-pointer hover:bg-gray-100"
+                    className="w-full border-r-[1px] border-b-[1px] border-[#E8EAED] p-5 cursor-pointer hover:bg-gray-100"
                     onClick={() => setIsCSVImportModalOpen(true)}
                   >
                     <div className="h-[80px] flex justify-between items-start">

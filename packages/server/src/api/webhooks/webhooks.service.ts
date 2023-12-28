@@ -16,18 +16,24 @@ import formData from 'form-data';
 import axios from 'axios';
 import FormData from 'form-data';
 import { randomUUID } from 'crypto';
+import { Step } from '../steps/entities/step.entity';
+import { KafkaProducerService } from '../kafka/producer.service';
+import { Message } from 'kafkajs';
+import { KAFKA_TOPIC_MESSAGE_STATUS } from '../kafka/constants';
 
 export enum ClickHouseEventProvider {
   MAILGUN = 'mailgun',
   SENDGRID = 'sendgrid',
   TWILIO = 'twilio',
   SLACK = 'slack',
-  FIREBASE = 'firebase',
+  PUSH = 'PUSH',
   WEBHOOKS = 'webhooks',
+  TRACKER = 'tracker',
 }
 
 export interface ClickHouseMessage {
-  audienceId: string;
+  audienceId?: string;
+  stepId?: string;
   createdAt: string;
   customerId: string;
   event: string;
@@ -50,24 +56,6 @@ export class WebhooksService {
     'unsubscribed',
   ];
 
-  private clickHouseClient = createClient({
-    host: process.env.CLICKHOUSE_HOST
-      ? process.env.CLICKHOUSE_HOST.includes('http')
-        ? process.env.CLICKHOUSE_HOST
-        : `http://${process.env.CLICKHOUSE_HOST}`
-      : 'http://localhost:8123',
-    username: process.env.CLICKHOUSE_USER ?? 'default',
-    password: process.env.CLICKHOUSE_PASSWORD ?? '',
-  });
-
-  public insertClickHouseMessages = async (values: ClickHouseMessage[]) => {
-    await this.clickHouseClient.insert<ClickHouseMessage>({
-      table: 'message_status',
-      values,
-      format: 'JSONEachRow',
-    });
-  };
-
   private sendgridEventsMap = {
     click: 'clicked',
     open: 'opened',
@@ -76,18 +64,21 @@ export class WebhooksService {
   constructor(
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: Logger,
-    @InjectRepository(Audience)
-    private audienceRepository: Repository<Audience>,
+    @InjectRepository(Step)
+    private stepRepository: Repository<Step>,
     @InjectRepository(Account)
-    private accountRepository: Repository<Account>
+    private accountRepository: Repository<Account>,
+    @Inject(KafkaProducerService)
+    private kafkaService: KafkaProducerService
   ) {
     const session = randomUUID();
     (async () => {
       try {
-        await this.setupMailgunWebhook(
-          process.env.MAILGUN_API_KEY,
-          process.env.MAILGUN_TEST_DOMAIN
-        );
+        if (process.env.MAILGUN_API_KEY && process.env.MAILGUN_TEST_DOMAIN)
+          await this.setupMailgunWebhook(
+            process.env.MAILGUN_API_KEY,
+            process.env.MAILGUN_TEST_DOMAIN
+          );
       } catch (e) {
         this.error(e, WebhooksService.name, session);
       }
@@ -159,25 +150,25 @@ export class WebhooksService {
     session: string,
     data?: any[]
   ) {
-    let audience: Audience = null;
+    let step: Step = null;
 
     for (const item of data) {
-      if (!item.audienceId) continue;
+      if (!item.stepId) continue;
 
-      audience = await this.audienceRepository.findOne({
+      step = await this.stepRepository.findOne({
         where: {
-          id: item.audienceId,
+          id: item.stepId,
         },
         relations: ['owner'],
       });
 
-      if (audience) break;
+      if (step) break;
     }
 
-    if (!audience) return;
+    if (!step) return;
     const {
       owner: { sendgridVerificationKey },
-    } = audience;
+    } = step;
 
     if (!sendgridVerificationKey)
       throw new BadRequestException(
@@ -200,7 +191,7 @@ export class WebhooksService {
 
     for (const item of data) {
       const {
-        audienceId,
+        stepId,
         customerId,
         templateId,
         event,
@@ -208,7 +199,7 @@ export class WebhooksService {
         timestamp,
       } = item;
       if (
-        !audienceId ||
+        !stepId ||
         !customerId ||
         !templateId ||
         !event ||
@@ -218,34 +209,31 @@ export class WebhooksService {
         continue;
 
       const clickHouseRecord: ClickHouseMessage = {
-        userId: audience.owner.id,
-        audienceId,
+        userId: step.owner.id,
+        stepId,
         customerId,
         templateId: String(templateId),
         messageId: sg_message_id.split('.')[0],
         event: this.sendgridEventsMap[event] || event,
         eventProvider: ClickHouseEventProvider.SENDGRID,
         processed: false,
-        createdAt: new Date().toUTCString(),
+        createdAt: new Date().toISOString(),
       };
-
-      this.logger.debug('Sendgrid webhook result:');
-      console.dir(clickHouseRecord, { depth: null });
 
       messagesToInsert.push(clickHouseRecord);
     }
-    await this.insertClickHouseMessages(messagesToInsert);
+    await this.insertMessageStatusToClickhouse(messagesToInsert);
   }
 
   public async processTwilioData(
     {
-      audienceId,
+      stepId,
       customerId,
       templateId,
       SmsStatus,
       MessageSid,
     }: {
-      audienceId: string;
+      stepId: string;
       customerId: string;
       templateId: string;
       SmsStatus: string;
@@ -253,24 +241,24 @@ export class WebhooksService {
     },
     session: string
   ) {
-    const audience = await this.audienceRepository.findOne({
+    const step = await this.stepRepository.findOne({
       where: {
-        id: audienceId,
+        id: stepId,
       },
       relations: ['owner'],
     });
     const clickHouseRecord: ClickHouseMessage = {
-      userId: audience.owner.id,
-      audienceId,
+      userId: step.owner.id,
+      stepId,
       customerId,
       templateId: String(templateId),
       messageId: MessageSid,
       event: SmsStatus,
       eventProvider: ClickHouseEventProvider.TWILIO,
       processed: false,
-      createdAt: new Date().toUTCString(),
+      createdAt: new Date().toISOString(),
     };
-    await this.insertClickHouseMessages([clickHouseRecord]);
+    await this.insertMessageStatusToClickhouse([clickHouseRecord]);
   }
 
   public async processMailgunData(
@@ -280,7 +268,7 @@ export class WebhooksService {
         event: string;
         message: { headers: { 'message-id': string } };
         'user-variables': {
-          audienceId: string;
+          stepId: string;
           customerId: string;
           templateId: string;
           accountId: string;
@@ -300,7 +288,7 @@ export class WebhooksService {
       message: {
         headers: { 'message-id': id },
       },
-      'user-variables': { audienceId, customerId, templateId, accountId },
+      'user-variables': { stepId, customerId, templateId, accountId },
     } = body['event-data'];
 
     const account = await this.accountRepository.findOneBy({ id: accountId });
@@ -319,24 +307,33 @@ export class WebhooksService {
       throw new ForbiddenException('Invalid signature');
     }
 
-    if (!audienceId || !customerId || !templateId || !id) return;
+    this.debug(
+      `${JSON.stringify({ webhook: body })}`,
+      this.processMailgunData.name,
+      session
+    );
+
+    if (!stepId || !customerId || !templateId || !id) return;
 
     const clickHouseRecord: ClickHouseMessage = {
       userId: account.id,
-      audienceId,
+      stepId,
       customerId,
       templateId: String(templateId),
       messageId: id,
       event: event,
       eventProvider: ClickHouseEventProvider.MAILGUN,
       processed: false,
-      createdAt: new Date().toUTCString(),
+      createdAt: new Date().toISOString(),
     };
 
-    this.logger.debug('Mailgun webhooK result:');
-    console.dir(clickHouseRecord, { depth: null });
+    this.debug(
+      `${JSON.stringify({ clickhouseMessage: clickHouseRecord })}`,
+      this.processMailgunData.name,
+      session
+    );
 
-    await this.insertClickHouseMessages([clickHouseRecord]);
+    await this.insertMessageStatusToClickhouse([clickHouseRecord]);
   }
 
   public async setupMailgunWebhook(
@@ -403,5 +400,19 @@ export class WebhooksService {
       );
       return Promise.reject(err);
     }
+  }
+
+  /**
+   * Queue a ClickHouseMessage to kafka so that it will be ingested into clickhouse.
+   */
+  public async insertMessageStatusToClickhouse(
+    clickhouseMessages: ClickHouseMessage[]
+  ) {
+    return await this.kafkaService.produceMessage(
+      KAFKA_TOPIC_MESSAGE_STATUS,
+      clickhouseMessages.map((clickhouseMessage) => ({
+        value: JSON.stringify(clickhouseMessage),
+      }))
+    );
   }
 }

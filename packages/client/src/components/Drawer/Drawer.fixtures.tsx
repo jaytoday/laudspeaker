@@ -1,62 +1,49 @@
-import {
-  Home,
-  Journeys,
-  Campaigns,
-  Segments,
-  Users,
-  Settings,
-  Messaging,
-  People,
-  Integrations,
-} from "../Icons/Icons";
-
-export default [
-  { id: "home", imgIcon: Home(), text: "Home" },
-  { id: "journeys", imgIcon: Journeys(), text: "Journeys" },
-  { id: "campaigns", imgIcon: Campaigns(), text: "Campaigns" },
-  { id: "alltemplates", imgIcon: Campaigns(), text: "Templates" },
-  { id: "segments", imgIcon: Segments(), text: "Segments" },
-  { id: "users", imgIcon: Users(), text: "Users" },
-  // {
-  //   id: "integrations",
-  //   imgIcon: Integrations(),
-  //   text: "Integrations",
-  // },
-  { id: "settings", imgIcon: Settings(), text: "Settings" },
-  //{ id: "analysis", imgIcon: Analysis(), text: "Analysis" },
-];
+import homeIcon from "./DrawerIcons/home.svg";
+import messagingIcon from "./DrawerIcons/messaging.svg";
+import journeyBuilderIcon from "./DrawerIcons/journeyBuilder.svg";
+import templateBuilderIcon from "./DrawerIcons/templateBuilder.svg";
+import audienceIcon from "./DrawerIcons/audience.svg";
+import dataIcon from "./DrawerIcons/data.svg";
+import settingsIcon from "./DrawerIcons/settings.svg";
 
 export const dataSubArray = [
   {
     id: "home",
-    imgIcon: Home(),
+    imgIcon: homeIcon,
     text: "Home",
     type: "menu",
     link: "/home",
   },
   {
     id: "messaging",
-    imgIcon: Messaging(),
-    text: "Messaging",
+    imgIcon: messagingIcon,
+    text: "Journeys",
     type: "group",
     children: [
       {
         id: "journeys",
-        imgIcon: Journeys(),
+        imgIcon: journeyBuilderIcon,
         text: "Journey Builder",
         type: "menu",
         link: "/flow",
       },
       {
         id: "campaigns",
-        imgIcon: Campaigns(),
-        text: "Template Builder",
+        imgIcon: templateBuilderIcon,
+        text: "Message templates",
         type: "menu",
         link: "/templates",
       },
       {
+        id: "tracker-template",
+        imgIcon: templateBuilderIcon,
+        text: "Component templates",
+        type: "menu",
+        link: "/tracker-template",
+      },
+      {
         id: "event-tracker",
-        imgIcon: Campaigns(),
+        imgIcon: templateBuilderIcon,
         text: "Event Tracker",
         type: "menu",
         link: "/event-tracker",
@@ -65,51 +52,52 @@ export const dataSubArray = [
   },
   {
     id: "audience",
-    imgIcon: People(),
+    imgIcon: audienceIcon,
     text: "Audience",
     type: "group",
     children: [
       {
         id: "users",
-        imgIcon: Users(),
+        imgIcon: audienceIcon,
         text: "People",
         type: "menu",
         link: "/people",
       },
       {
         id: "segments",
-        imgIcon: Segments(),
+        imgIcon: audienceIcon,
         text: "Segments",
         type: "menu",
         link: "/segment",
       },
     ],
   },
-  {
-    id: "integrations",
-    imgIcon: Integrations(),
-    text: "Data",
-    type: "group",
-    children: [
-      {
-        id: "integrations",
-        imgIcon: Integrations(),
-        text: "Database import",
-        type: "menu",
-        link: "/integrations",
-      },
-      // {
-      //   id: "analysis",
-      //   imgIcon: Analysis(),
-      //   text: "Analysis",
-      //   type: "menu",
-      //   link: "/analysis",
-      // },
-    ],
-  },
+  // Removed for version 1 release
+  // {
+  //   id: "integrations",
+  //   imgIcon: dataIcon,
+  //   text: "Data",
+  //   type: "group",
+  //   children: [
+  //     {
+  //       id: "integrations",
+  //       imgIcon: dataIcon,
+  //       text: "Database import",
+  //       type: "menu",
+  //       link: "/integrations",
+  //     },
+  //     // {
+  //     //   id: "analysis",
+  //     //   imgIcon: Analysis(),
+  //     //   text: "Analysis",
+  //     //   type: "menu",
+  //     //   link: "/analysis",
+  //     // },
+  //   ],
+  // },
   {
     id: "settings",
-    imgIcon: Settings(),
+    imgIcon: settingsIcon,
     text: "Settings",
     type: "menu",
     link: "/settings",

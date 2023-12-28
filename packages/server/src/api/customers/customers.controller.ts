@@ -15,7 +15,7 @@ import {
   Put,
   UploadedFile,
 } from '@nestjs/common';
-import { Multer } from 'multer';
+import { diskStorage, Multer } from 'multer';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CustomersService } from './customers.service';
@@ -26,6 +26,12 @@ import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiKeyAuthGuard } from '../auth/guards/apikey-auth.guard';
 import { randomUUID } from 'crypto';
+import { GetBulkCustomerCountDto } from './dto/get-bulk-customer-count.dto';
+import { RavenInterceptor } from 'nest-raven';
+import { AttributeType } from './schemas/customer-keys.schema';
+import { ImportCustomersDTO } from './dto/import-customers.dto';
+import { extname } from 'path';
+import { UpdatePK_DTO } from './dto/update-pk.dto';
 
 @Controller('customers')
 export class CustomersController {
@@ -36,7 +42,7 @@ export class CustomersController {
     private readonly customersService: CustomersService,
     @Inject(AccountsService)
     private readonly userService: AccountsService
-  ) {}
+  ) { }
 
   log(message, method, session, user = 'ANONYMOUS') {
     this.logger.log(
@@ -99,7 +105,7 @@ export class CustomersController {
 
   @Get()
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   findAll(
     @Req() { user }: Request,
     @Query('take') take?: string,
@@ -107,7 +113,8 @@ export class CustomersController {
     @Query('checkInSegment') checkInSegment?: string,
     @Query('searchKey') searchKey?: string,
     @Query('searchValue') searchValue?: string,
-    @Query('showFreezed') showFreezed?: string
+    @Query('showFreezed') showFreezed?: string,
+    @Query('orderType') orderType?: string
   ) {
     const session = randomUUID();
 
@@ -119,18 +126,46 @@ export class CustomersController {
       checkInSegment,
       searchKey,
       searchValue,
-      showFreezed === 'true'
+      showFreezed === 'true',
+      orderType === 'asc' ? 'asc' : 'desc'
     );
+  }
+
+  @Get('/search-for-test')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async searchForTest(
+    @Req() { user }: Request,
+    @Query('take') take = 100,
+    @Query('skip') skip = 0,
+    @Query('search') search = ''
+  ) {
+    return await this.customersService.searchForTest(
+      <Account>user,
+      take,
+      skip,
+      search
+    );
+  }
+
+  @Put('/primary-key')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async updatePrimaryKey(@Req() { user }: Request, @Body() body: UpdatePK_DTO) {
+    const session = randomUUID();
+
+    await this.customersService.updatePrimaryKey(<Account>user, body, session);
   }
 
   @Get('/possible-attributes')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async getPossibleAttributes(
     @Req() { user }: Request,
     @Query('key') key = '',
     @Query('type') type = null,
-    @Query('isArray') isArray = null
+    @Query('isArray') isArray = null,
+    @Query('removeLimit') removeLimit = null
   ) {
     const session = randomUUID();
 
@@ -139,13 +174,14 @@ export class CustomersController {
       session,
       key,
       type,
-      isArray
+      isArray,
+      removeLimit
     );
   }
 
   @Get('/audienceStats')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   findAudienceStatsCustomers(
     @Req() { user }: Request,
     @Query('take') take?: string,
@@ -165,20 +201,61 @@ export class CustomersController {
     );
   }
 
+  @Get('/stats-from-step')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async getCustomersFromStepStatsByEvent(
+    @Req() { user }: Request,
+    @Query('take') take?: string,
+    @Query('skip') skip?: string,
+    @Query('event') event?: string,
+    @Query('stepId') stepId?: string
+  ) {
+    const session = randomUUID();
+
+    return this.customersService.getCustomersFromStepStatsByEvent(
+      <Account>user,
+      session,
+      take && +take,
+      skip && +skip,
+      event,
+      stepId
+    );
+  }
+
+  @Get('/getLastImportCSV')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async getLastImportCSV(@Req() { user }: Request) {
+    const session = randomUUID();
+    return this.customersService.getLastImportCSV(<Account>user, session);
+  }
+
   @Get('/:id')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async findOne(@Req() { user }: Request, @Param() { id }: { id: string }) {
     const session = randomUUID();
-    const { _id, __v, ownerId, verified, ...customer } =
-      await this.customersService.findOne(<Account>user, id, session);
+    const {
+      _id,
+      __v,
+      ownerId,
+      verified,
+      journeys,
+      journeyEnrollmentsDates,
+      slackTeamId,
+      posthogId,
+      workflows,
+      customComponents,
+      ...customer
+    } = await this.customersService.findOne(<Account>user, id, session);
     const createdAt = new Date(parseInt(_id.slice(0, 8), 16) * 1000).getTime();
     return { ...customer, createdAt };
   }
 
   @Put('/:id')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   update(
     @Req() { user }: Request,
     @Param() { id }: { id: string },
@@ -195,7 +272,7 @@ export class CustomersController {
 
   @Post('/create/')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async create(
     @Req() { user }: Request,
     @Body() createCustomerDto: CreateCustomerDto
@@ -211,7 +288,7 @@ export class CustomersController {
 
   @Post('/upsert/')
   @UseGuards(ApiKeyAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async upsert(
     @Req() { user }: Request,
     @Body() updateCustomerDto: Record<string, unknown>
@@ -226,7 +303,7 @@ export class CustomersController {
 
   @Get('/attributes/:resourceId')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   getAttributes(
     @Req() { user }: Request,
     @Param('resourceId') resourceId: string
@@ -239,20 +316,70 @@ export class CustomersController {
     );
   }
 
-  @Get('/:id/events')
+  @Post('/attributes/create')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
-  findCustomerEvents(
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async createAttribute(
     @Req() { user }: Request,
-    @Param() { id }: { id: string }
+    @Body() { name, type }: { name: string; type: AttributeType }
   ) {
     const session = randomUUID();
-    return this.customersService.findCustomerEvents(<Account>user, id, session);
+    return this.customersService.createAttribute(
+      <Account>user,
+      name,
+      type,
+      session
+    );
+  }
+
+  @Post('/attributes/count-import-preview')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async countImportPreview(
+    @Req() { user }: Request,
+    @Body() body: ImportCustomersDTO
+  ) {
+    const session = randomUUID();
+    return this.customersService.countImportPreview(
+      <Account>user,
+      body,
+      session
+    );
+  }
+
+  @Post('/attributes/start-import')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async startImport(
+    @Req() { user }: Request,
+    @Body() body: ImportCustomersDTO
+  ) {
+    const session = randomUUID();
+    return this.customersService.startImport(<Account>user, body, session);
+  }
+
+  @Get('/:id/events')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async findCustomerEvents(
+    @Req() { user }: Request,
+    @Param() { id }: { id: string },
+    @Query('page') page: number,
+    @Query('pageSize') pageSize: number
+  ) {
+    const session = randomUUID();
+    return this.customersService.findCustomerEvents(
+      <Account>user,
+      id,
+      session,
+      page,
+      pageSize
+    );
   }
 
   @Post('/importph')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async getPostHogPersons(@Req() { user }: Request) {
     const session = randomUUID();
 
@@ -260,7 +387,6 @@ export class CustomersController {
     try {
       account = await this.userService.findOne(user, session);
     } catch (e) {
-      this.logger.error('Error:' + e);
       return new HttpException(e, 500);
     }
 
@@ -274,14 +400,13 @@ export class CustomersController {
         session
       );
     } catch (e) {
-      this.logger.error('Error:' + e);
       return new HttpException(e, 500);
     }
   }
 
   @Post('/importcsv')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   @UseInterceptors(FileInterceptor('file'))
   async getCSVPeople(
     @Req() { user }: Request,
@@ -291,9 +416,55 @@ export class CustomersController {
     return this.customersService.loadCSV(<Account>user, file, session);
   }
 
+  @Post('/uploadCSV')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        files: 1,
+        fileSize: 1073741824,
+      },
+      storage: diskStorage({
+        destination: './import-upload',
+        filename(req, file, callback) {
+          const name = file.originalname.split('.')[0];
+          const fileExtName = extname(file.originalname);
+          const randomName = Array(4)
+            .fill(null)
+            .map(() => Math.round(Math.random() * 16).toString(16))
+            .join('');
+          callback(null, `${randomName}-${name}${fileExtName}`);
+        },
+      }),
+    })
+  )
+  async uploadCSV(
+    @Req() { user }: Request,
+    @UploadedFile() file: Express.Multer.File
+  ) {
+    const session = randomUUID();
+    return this.customersService.uploadCSV(<Account>user, file, session);
+  }
+
+  @Post('/imports/delete/:fileKey')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async deleteImportFile(
+    @Req() { user }: Request,
+    @Param('fileKey') fileKey: string
+  ) {
+    const session = randomUUID();
+    return this.customersService.deleteImportFile(
+      <Account>user,
+      fileKey,
+      session
+    );
+  }
+
   @Post('/delete/:custId')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async deletePerson(
     @Req() { user }: Request,
     @Param('custId') custId: string
@@ -311,5 +482,52 @@ export class CustomersController {
       this.error(e, this.deletePerson.name, session, (<Account>user).id);
       throw e;
     }
+  }
+
+  @Post('/count/bulk')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async getBulkCustomersCountInSteps(
+    @Req() { user }: Request,
+    @Body() getBulkCustomerCountDto: GetBulkCustomerCountDto
+  ) {
+    return this.customersService.bulkCountCustomersInSteps(
+      <Account>user,
+      getBulkCustomerCountDto.stepIds
+    );
+  }
+
+  @Get('/in-step/:stepId')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async getCustomersInStep(
+    @Req() { user }: Request,
+    @Param('stepId') stepId,
+    @Query('take') take?: string,
+    @Query('skip') skip?: string
+  ) {
+    return this.customersService.getCustomersInStep(
+      <Account>user,
+      stepId,
+      take && +take,
+      skip && +skip
+    );
+  }
+
+  @Get(':custId/getJourneys')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async getCustomerJourneys(
+    @Req() { user }: Request,
+    @Param('custId') custId: string,
+    @Query('take') take: number,
+    @Query('skip') skip: number
+  ) {
+    return this.customersService.getCustomerJourneys(
+      <Account>user,
+      custId,
+      take,
+      skip
+    );
   }
 }

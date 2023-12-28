@@ -167,5 +167,9 @@ node_modules
 # package-lock.json
 cypress.env.json
 .env
+.npmrc
 /data
 test-firebase-credentials.json
+
+# grabage
+.DS_Store

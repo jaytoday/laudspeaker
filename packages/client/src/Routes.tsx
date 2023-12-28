@@ -10,21 +10,12 @@ import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import tokenService from "./services/token.service";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
-import FlowBuilder from "pages/FlowBuilder";
 import EmailBuilder from "pages/EmailBuilder";
-import { getUserPermissions } from "reducers/auth";
+import { ActionType, getUserPermissions } from "reducers/auth.reducer";
 import SlackBuilder from "pages/SlackBuilder";
 import Cor from "pages/Cor";
-import FlowTable from "pages/FlowTable/FlowTable";
-import TemplateTable from "pages/TemplateTable/TemplateTable";
-import PeopleTable from "pages/PeopleTable/PeopleTable";
-import FlowViewer from "pages/FlowViewer";
 import { useDispatch } from "react-redux";
 import DrawerLayout from "components/DrawerLayout";
-import TableBeta from "pages/TemplateTable/TableBeta";
-import OnboardingBeta from "pages/Onboarding/OnboardingBeta";
-import Settings from "pages/Settings/Settings";
-import Person from "pages/Person";
 import Verify from "pages/Verify";
 import SmsBuilder from "pages/SmsBuilder";
 import Database from "pages/Integrations/Database";
@@ -33,15 +24,39 @@ import Modal from "components/Elements/Modal";
 import ApiService from "services/api.service";
 import Account from "types/Account";
 import { GenericButton } from "components/Elements";
-import Home from "pages/Home";
-import FirebaseBuilder from "pages/FirebaseBuilder/FirebaseBuilder";
 import ResetPassword from "pages/ResetPassword";
-import SegmentTable from "pages/SegmentTable";
-import SegmentViewer from "pages/SegmentViewer";
 import ModalBuilder from "pages/ModalBuilder";
 import WebhookBuilder from "pages/WebhookBuilder";
 import EventTracker from "pages/EventTracker";
 import ModalBackgroundProvider from "pages/ModalBuilder/ModalBackgroundProvider";
+import FlowBuilderv2 from "pages/FlowBuilderv2";
+import FlowViewerv2 from "pages/FlowViewerv2";
+import Onboardingv2 from "pages/Onboardingv2";
+import Homev2 from "pages/Homev2";
+import Verificationv2 from "pages/Verificationv2";
+import { toast } from "react-toastify";
+import JourneyTablev2 from "pages/JourneyTablev2";
+import TemplateTablev2 from "pages/TemplateTablev2";
+import PeopleTablev2 from "pages/PeopleTablev2";
+import SegmentTablev2 from "pages/SegmentTablev2";
+import TrackerTemplateBuilder from "pages/TrackerTemplateBuilder";
+import Settingsv2 from "pages/Settingsv2";
+import EmailSettings from "pages/EmailSettings/EmailSettings";
+import TwilioSettings from "pages/TwilioSettings";
+import PosthogSettings from "pages/PosthogSettings";
+import JavascriptSnippetSettings from "pages/JavascriptSnippetSettings";
+import CustomModalSettings from "pages/CustomModalSettings";
+import TrackerTemplateTable from "pages/TrackerTemplateTable";
+import { LaudspeakerProvider } from "@laudspeaker/react";
+import AppConfig from "constants/app";
+import Personv2 from "pages/Personv2";
+import SegmentCreation from "pages/SegmentCreation/index";
+import PushBuilder from "pages/PushBuilder/PushBuilder";
+import PushSettings from "pages/PushSettings";
+import PeopleImport from "pages/PeopleImport/PeopleImport";
+import PeopleSetting from "pages/PeopleSetting/PeopleSetting";
+import SegmentEditor from "pages/SegmentCreation/SegmentEditor";
+import config, { ONBOARDING_API_KEY_KEY, WS_BASE_URL_KEY } from "config";
 
 interface IProtected {
   children: ReactElement;
@@ -67,6 +82,92 @@ const Protected = ({ children }: IProtected) => {
   return isLoggedIn ? children : <></>;
 };
 
+interface IAllowed {
+  route: string;
+  children: ReactElement;
+}
+
+const Allowed = ({ route, children }: IAllowed) => {
+  const navigate = useNavigate();
+  const [isSlackAllowed, setIsSlackAllowed] = useState(true);
+  const [isVerifiedAllowed, setIsVerifiedAllowed] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      const { data } = await ApiService.get({ url: "/allowed" });
+      const { verified_not_allowed, slack_not_allowed } = data;
+      setIsVerifiedAllowed(!verified_not_allowed);
+      setIsSlackAllowed(!slack_not_allowed);
+      setIsLoaded(true);
+    } catch (e) {
+      toast.error("Error while checking allowed routes");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    if (route === "verified") {
+      if (isLoaded && !isVerifiedAllowed) navigate("/home");
+    } else if (route === "slack") {
+      if (isLoaded && !isSlackAllowed) navigate("/home");
+    }
+  }, [isVerifiedAllowed, isSlackAllowed, isLoaded]);
+
+  if (route === "verified") {
+    return isVerifiedAllowed ? <>{children}</> : <></>;
+  }
+  if (route === "slack") {
+    return isSlackAllowed ? <>{children}</> : <></>;
+  }
+  return <></>;
+};
+
+interface VerificationProtectedProps {
+  children: ReactNode;
+}
+
+const VerificationProtected: FC<VerificationProtectedProps> = ({
+  children,
+}) => {
+  const navigate = useNavigate();
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
+
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      const { data } = await ApiService.get({ url: "/accounts" });
+      const { verified } = data;
+      setIsVerified(verified);
+      setIsLoaded(true);
+    } catch (e) {
+      toast.error("Error while loading data");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    if (isLoaded && !isVerified) navigate("/verification");
+  }, [isVerified, isLoaded]);
+
+  return isVerified ? <>{children}</> : <></>;
+};
+
 export interface WelcomeBannerProviderProps {
   children: ReactNode;
   hidden: boolean;
@@ -81,14 +182,6 @@ const WelcomeBannerProvider: FC<WelcomeBannerProviderProps> = ({
   const [firstName, setFirstName] = useState("");
 
   const navigate = useNavigate();
-
-  useEffect(() => {
-    (async () => {
-      const { data } = await ApiService.get<Account>({ url: "/accounts" });
-
-      setFirstName(data?.firstName || "");
-    })();
-  }, []);
 
   return (
     <>
@@ -147,6 +240,32 @@ const WelcomeBannerProvider: FC<WelcomeBannerProviderProps> = ({
 
 const RouteComponent: React.FC = () => {
   const [showWelcomeBanner, setShowWelcomeBanner] = useState(false);
+  const dispatch = useDispatch();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await ApiService.get<Account>({ url: "/accounts" });
+
+        dispatch({
+          type: ActionType.LOGIN_USER_SUCCESS,
+          payload: {
+            firstName: data.firstName,
+            lastName: data.lastName,
+            uId: data.id,
+            onboarded: data.onboarded,
+            email: data.email,
+            expectedOnboarding: data.expectedOnboarding,
+            verified: data.verified,
+            pk: data.pk,
+            pushPlatforms: data.pushPlatforms,
+          },
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+  }, []);
 
   return (
     <BrowserRouter>
@@ -163,14 +282,11 @@ const RouteComponent: React.FC = () => {
           path="/"
           element={
             <Protected>
-              <WelcomeBannerProvider
-                hidden={!showWelcomeBanner}
-                setHidden={(value) => setShowWelcomeBanner(!value)}
-              >
+              <VerificationProtected>
                 <DrawerLayout>
-                  <Home />
+                  <Homev2 />
                 </DrawerLayout>
-              </WelcomeBannerProvider>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -190,9 +306,13 @@ const RouteComponent: React.FC = () => {
           path="/flow"
           element={
             <Protected>
-              <DrawerLayout>
-                <FlowTable />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout
+                  crumbs={[{ text: "Journey builder", link: "/flow" }]}
+                >
+                  <JourneyTablev2 />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -200,9 +320,35 @@ const RouteComponent: React.FC = () => {
           path="/flow/:id"
           element={
             <Protected>
-              <DrawerLayout>
-                <FlowBuilder />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout
+                  crumbs={[
+                    { text: "Journey builder", link: "/flow" },
+                    { text: "Create a journey" },
+                  ]}
+                  expandable
+                >
+                  <FlowBuilderv2 />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/flow/:id/v2"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout
+                  crumbs={[
+                    { text: "Journey builder", link: "/flow" },
+                    { text: "Create a journey" },
+                  ]}
+                  expandable
+                >
+                  <FlowBuilderv2 />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -210,9 +356,11 @@ const RouteComponent: React.FC = () => {
           path="/event-tracker"
           element={
             <Protected>
-              <DrawerLayout>
-                <EventTracker />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <EventTracker />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -220,9 +368,17 @@ const RouteComponent: React.FC = () => {
           path="/flow/:id/view"
           element={
             <Protected>
-              <DrawerLayout>
-                <FlowViewer />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout
+                  expandable
+                  crumbs={[
+                    { text: "Journey builder", link: "/flow" },
+                    { text: "Journey" },
+                  ]}
+                >
+                  <FlowViewerv2 />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -230,9 +386,45 @@ const RouteComponent: React.FC = () => {
           path="/people"
           element={
             <Protected>
-              <DrawerLayout>
-                <PeopleTable />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <PeopleTablev2 />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/people/import"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout
+                  crumbs={[
+                    { text: "Users", link: "/people" },
+                    { text: "Import users" },
+                  ]}
+                >
+                  <PeopleImport />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/people/setting"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout
+                  crumbs={[
+                    { text: "Users", link: "/people" },
+                    { text: "Setting" },
+                  ]}
+                >
+                  <PeopleSetting />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -240,19 +432,36 @@ const RouteComponent: React.FC = () => {
           path="/person/:id"
           element={
             <Protected>
-              <DrawerLayout>
-                <Person />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <Personv2 />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
+
         <Route
           path="/segment"
           element={
             <Protected>
-              <DrawerLayout>
-                <SegmentTable />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <SegmentTablev2 />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/segment/create"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <SegmentCreation />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -260,9 +469,11 @@ const RouteComponent: React.FC = () => {
           path="/segment/:id"
           element={
             <Protected>
-              <DrawerLayout>
-                <SegmentViewer />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <SegmentEditor />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -270,9 +481,11 @@ const RouteComponent: React.FC = () => {
           path="/email-builder"
           element={
             <Protected>
-              <DrawerLayout>
-                <EmailBuilder />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <EmailBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -280,9 +493,11 @@ const RouteComponent: React.FC = () => {
           path="/slack-builder"
           element={
             <Protected>
-              <DrawerLayout>
-                <SlackBuilder />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <SlackBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -290,89 +505,149 @@ const RouteComponent: React.FC = () => {
           path="/sms-builder"
           element={
             <Protected>
-              <DrawerLayout>
-                <SmsBuilder />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <SmsBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
         <Route
-          path="/templates/email/:name"
+          path="/templates/email/:id"
           element={
             <Protected>
-              <DrawerLayout>
-                <EmailBuilder />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <EmailBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
-        <Route
+        {/* Removed for 1 release
+         <Route
           path="/templates/slack/:name"
           element={
             <Protected>
-              <DrawerLayout>
-                <SlackBuilder />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <SlackBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
-        />
+        /> */}
         <Route
-          path="/templates/sms/:name"
+          path="/templates/sms/:id"
           element={
             <Protected>
-              <DrawerLayout>
-                <SmsBuilder />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <SmsBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
+
+        <Route
+          path="/templates/push/:id"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <PushBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        {/* Removed for 1 release
         <Route
           path="/templates/firebase/:name"
           element={
             <Protected>
-              <DrawerLayout>
-                <FirebaseBuilder />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <FirebaseBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
+        */}
         <Route
-          path="/templates/webhook/:name"
+          path="/templates/webhook/:id"
           element={
             <Protected>
-              <DrawerLayout>
-                <WebhookBuilder />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <WebhookBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
+        {/*
         <Route
           path="/templates/modal/:name"
           element={
             <Protected>
-              <ModalBackgroundProvider>
-                <ModalBuilder />
-              </ModalBackgroundProvider>
+              <VerificationProtected>
+                <ModalBackgroundProvider>
+                  <ModalBuilder />
+                </ModalBackgroundProvider>
+              </VerificationProtected>
             </Protected>
           }
-        />
+        /> */}
         <Route
           path="/templates"
           element={
             <Protected>
-              <DrawerLayout>
-                <TemplateTable />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <TemplateTablev2 />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
         <Route
+          path="/tracker-template/:id"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <TrackerTemplateBuilder />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/tracker-template"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <TrackerTemplateTable />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        {/* Removed for version 1 release
+        <Route
           path="/integrations"
           element={
             <Protected>
-              <DrawerLayout>
-                <Integrations />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <Integrations />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -380,9 +655,11 @@ const RouteComponent: React.FC = () => {
           path="/integrations/db"
           element={
             <Protected>
-              <DrawerLayout>
-                <Database />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <Database />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -390,9 +667,19 @@ const RouteComponent: React.FC = () => {
           path="/integrations/db/:id"
           element={
             <Protected>
-              <DrawerLayout>
-                <Database />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <Database />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        /> */}
+        <Route
+          path="/verification"
+          element={
+            <Protected>
+              <Verificationv2 />
             </Protected>
           }
         />
@@ -400,19 +687,83 @@ const RouteComponent: React.FC = () => {
           path="/settings"
           element={
             <Protected>
-              <DrawerLayout>
-                <Settings />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <Settingsv2 />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
         <Route
-          path="/beta/table"
+          path="/settings/email"
           element={
             <Protected>
-              <DrawerLayout>
-                <TableBeta />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <EmailSettings />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/settings/sms"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <TwilioSettings />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/settings/push"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <PushSettings />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/settings/custom-modal"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <CustomModalSettings />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/settings/posthog"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <PosthogSettings />
+                </DrawerLayout>
+              </VerificationProtected>
+            </Protected>
+          }
+        />
+        <Route
+          path="/settings/javascript-snippet"
+          element={
+            <Protected>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <JavascriptSnippetSettings />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -420,14 +771,11 @@ const RouteComponent: React.FC = () => {
           path="/home"
           element={
             <Protected>
-              <WelcomeBannerProvider
-                hidden={!showWelcomeBanner}
-                setHidden={(value) => setShowWelcomeBanner(!value)}
-              >
+              <VerificationProtected>
                 <DrawerLayout>
-                  <Home />
+                  <Homev2 />
                 </DrawerLayout>
-              </WelcomeBannerProvider>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -435,14 +783,16 @@ const RouteComponent: React.FC = () => {
           path="/onboarding"
           element={
             <Protected>
-              <WelcomeBannerProvider
-                hidden={!showWelcomeBanner}
-                setHidden={(value) => setShowWelcomeBanner(!value)}
-              >
-                <DrawerLayout>
-                  <OnboardingBeta />
-                </DrawerLayout>
-              </WelcomeBannerProvider>
+              <VerificationProtected>
+                <LaudspeakerProvider
+                  apiKey={
+                    config.get(ONBOARDING_API_KEY_KEY) ?? "onboarding-api-key"
+                  }
+                  apiHost={config.get(WS_BASE_URL_KEY)}
+                >
+                  <Onboardingv2 />
+                </LaudspeakerProvider>
+              </VerificationProtected>
             </Protected>
           }
         />
@@ -450,7 +800,14 @@ const RouteComponent: React.FC = () => {
           path="/slack/cor/:id"
           element={
             <Protected>
-              <Cor />
+              <Allowed
+                route={"slack"}
+                children={
+                  <VerificationProtected>
+                    <Cor />
+                  </VerificationProtected>
+                }
+              />
             </Protected>
           }
         />
@@ -470,9 +827,11 @@ const RouteComponent: React.FC = () => {
           path="*"
           element={
             <Protected>
-              <DrawerLayout>
-                <FlowTable />
-              </DrawerLayout>
+              <VerificationProtected>
+                <DrawerLayout>
+                  <JourneyTablev2 />
+                </DrawerLayout>
+              </VerificationProtected>
             </Protected>
           }
         />

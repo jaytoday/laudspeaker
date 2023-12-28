@@ -26,6 +26,8 @@ import { Account } from '../accounts/entities/accounts.entity';
 import { Request } from 'express';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { randomUUID } from 'crypto';
+import { RavenInterceptor } from 'nest-raven';
+import { CustomerPushTest } from './dto/customer-push-test.dto';
 
 @Controller('events')
 export class EventsController {
@@ -95,52 +97,31 @@ export class EventsController {
     );
   }
 
-  @Post('job-status/email')
-  @UseInterceptors(ClassSerializerInterceptor)
-  async getJobEmailStatus(@Body() body: StatusJobDto): Promise<string> {
-    const session = randomUUID();
-    return this.eventsService.getJobStatus(body, JobTypes.email, session);
-  }
-
-  @Post('job-status/slack')
-  @UseInterceptors(ClassSerializerInterceptor)
-  async getJobSlackStatus(@Body() body: StatusJobDto): Promise<string> {
-    const session = randomUUID();
-    return this.eventsService.getJobStatus(body, JobTypes.slack, session);
-  }
-
-  @Post('job-status/webhook')
-  @UseInterceptors(ClassSerializerInterceptor)
-  async getJobWebhookStatus(@Body() body: StatusJobDto): Promise<string> {
-    const session = randomUUID();
-    return this.eventsService.getJobStatus(body, JobTypes.webhooks, session);
-  }
-
   @Post('/posthog/')
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   @UseGuards(ApiKeyAuthGuard)
-  async getPostHogPayload(
-    @Headers('Authorization') apiKey: string,
+  async posthogPayload(
+    @Req() { user }: Request,
     @Body() body: PosthogBatchEventDto
-  ): Promise<WorkflowTick[] | HttpException> {
+  ): Promise<void | HttpException> {
     const session = randomUUID();
-    return this.eventsService.getPostHogPayload(apiKey, body, session);
+    return; //this.eventsService.posthogPayload(<Account>user, body, session);
   }
 
   @Post()
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   @UseGuards(ApiKeyAuthGuard)
-  async enginePayload(
-    @Headers('Authorization') apiKey: string,
+  async customPayload(
+    @Req() { user }: Request,
     @Body() body: EventDto
-  ): Promise<WorkflowTick[] | HttpException> {
+  ): Promise<void | HttpException> {
     const session = randomUUID();
-    return this.eventsService.enginePayload(apiKey, body, session);
+    return this.eventsService.customPayload(<Account>user, body, session);
   }
 
   @Get('/possible-attributes/:resourceId?')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async getAttributes(
     @Req() { user }: Request,
     @Param('resourceId') resourceId = '',
@@ -155,9 +136,37 @@ export class EventsController {
     );
   }
 
+  @Post('/sendTestPush')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async sendTestPush(
+    @Req() { user }: Request,
+    @Body() { token }: { token: string }
+  ) {
+    try {
+      await this.eventsService.sendTestPush(<Account>user, token);
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  @Post('/sendTestPushByCustomer')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
+  async sendTestPushByCustomer(
+    @Req() { user }: Request,
+    @Body() body: CustomerPushTest
+  ) {
+    try {
+      await this.eventsService.sendTestPushByCustomer(<Account>user, body);
+    } catch (error) {
+      throw error;
+    }
+  }
+
   @Get('/attributes/:resourceId?')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async getOrUpdateAttributes(@Param('resourceId') resourceId = '') {
     const session = randomUUID();
     return this.eventsService.getOrUpdateAttributes(resourceId, session);
@@ -165,7 +174,7 @@ export class EventsController {
 
   @Get('/possible-types')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async getPossibleTypes() {
     const session = randomUUID();
     return this.eventsService.getPossibleTypes(session);
@@ -173,7 +182,7 @@ export class EventsController {
 
   @Get('/possible-comparison/:type')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async getPossibleComparison(@Param('type') type: string) {
     const session = randomUUID();
     return this.eventsService.getPossibleComparisonTypes(type, session);
@@ -181,7 +190,7 @@ export class EventsController {
 
   @Get('/possible-values/:key')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async getPossibleValues(
     @Param('key') key: string,
     @Query('search') search: string
@@ -192,7 +201,7 @@ export class EventsController {
 
   @Get('/possible-posthog-types')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async getPossiblePothogTypes(
     @Query('search') search: string,
     @Req() { user }: Request
@@ -207,7 +216,7 @@ export class EventsController {
 
   @Get('/posthog-events')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(ClassSerializerInterceptor)
+  @UseInterceptors(ClassSerializerInterceptor, new RavenInterceptor())
   async getPosthogEvents(
     @Req() { user }: Request,
     @Query('take') take?: string,

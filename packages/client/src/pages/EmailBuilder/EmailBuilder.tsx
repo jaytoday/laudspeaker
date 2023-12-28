@@ -35,10 +35,10 @@ export interface Resource {
 }
 
 const EmailBuilder = () => {
-  const { name } = useParams();
+  const { id } = useParams();
   const [title, setTitle] = useState<string>("");
   const [cc, setCC] = useState<string>("");
-  const [templateName, setTemplateName] = useState<string>(name);
+  const [templateName, setTemplateName] = useState<string>("");
   const [editor, setEditor] = useState<grapesjs.Editor>();
   const [emailTemplateId, setEmailTemplateId] = useState<string>();
   const [text, setText] = useState<string>("");
@@ -110,10 +110,10 @@ const EmailBuilder = () => {
 
   useLayoutEffect(() => {
     const populateEmailBuilder = async () => {
-      const { data } = await getTemplate(name);
+      const { data } = await getTemplate(id);
       setTitle(data.subject);
-      setCC(data.cc.join());
-      setTemplateName(name);
+      if (data?.cc) setCC(data.cc.join());
+      setTemplateName(data.name);
       setEmailTemplateId(data.id);
       setText(data.text);
       setStyle(data.style);
@@ -134,22 +134,12 @@ const EmailBuilder = () => {
         style: editor?.getCss(),
         type: "email",
       };
-      if (emailTemplateId == null) {
-        const response = await ApiService.post({
-          url: `${ApiConfig.createTemplate}`,
-          options: {
-            ...reqBody,
-          },
-        });
-        setEmailTemplateId(response.data.id);
-      } else {
-        await ApiService.patch({
-          url: `${ApiConfig.getAllTemplates}/${name}`,
-          options: {
-            ...reqBody,
-          },
-        });
-      }
+      await ApiService.patch({
+        url: `${ApiConfig.getAllTemplates}/${id}`,
+        options: {
+          ...reqBody,
+        },
+      });
     } catch (e) {
       toast.error("Error while saving");
     } finally {
@@ -222,25 +212,6 @@ const EmailBuilder = () => {
   return (
     <>
       <div hidden={isLoading} className="w-full">
-        <Helmet>
-          <script>
-            {`
-            (function (d, t) {
-              var BASE_URL = "https://app.chatwoot.com";
-              var g = d.createElement(t), s = d.getElementsByTagName(t)[0];
-              g.src = BASE_URL + "/packs/js/sdk.js";
-              g.defer = true;
-              g.async = true;
-              s.parentNode.insertBefore(g, s);
-              g.onload = function () {
-                window.chatwootSDK.run({
-                  websiteToken: 'SzjbgmVdjTexxW1nEFLHHBGM',
-                  baseUrl: BASE_URL
-                })
-              }
-            })(document, "script");`}
-          </script>
-        </Helmet>
         <EmailHeader
           onPersonalize={onPersonalize}
           onAddApiCallClick={onAddApiCallClick}

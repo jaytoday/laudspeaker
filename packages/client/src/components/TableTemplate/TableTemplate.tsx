@@ -14,6 +14,7 @@ import { ApiConfig } from "../../constants";
 import ApiService from "services/api.service";
 import ToggleSwitch from "components/Elements/ToggleSwitch";
 import { GenericButton } from "components/Elements";
+import { JourneyStatus } from "pages/JourneyTablev2/JourneyTablev2";
 
 export interface TableDataItem {
   isInsideSegment?: boolean;
@@ -188,20 +189,12 @@ function renderCorrectColumnNames(
   }
 }
 
-export enum JourneyStatus {
-  ACTIVE = "Active",
-  PAUSED = "Paused",
-  STOPPED = "Stopped",
-  DELETED = "Deleted",
-  EDITABLE = "Editable",
-}
-
 const statusStyles = {
   [JourneyStatus.ACTIVE]: "",
   [JourneyStatus.PAUSED]: "!bg-yellow-200 !text-yellow-600",
   [JourneyStatus.STOPPED]: "!bg-red-200 !text-red-600",
   [JourneyStatus.DELETED]: "!bg-red-200 !text-red-600",
-  [JourneyStatus.EDITABLE]: "!bg-gray-200 !text-gray-600",
+  [JourneyStatus.DRAFT]: "!bg-gray-200 !text-gray-600",
 };
 
 function renderSecondColumn(row: TableDataItem) {
@@ -223,7 +216,7 @@ function renderSecondColumn(row: TableDataItem) {
     );
   } else if (row.isActive != null) {
     //this is a test for checking if this is the journeys table or the template table
-    let status: JourneyStatus = JourneyStatus.EDITABLE;
+    let status: JourneyStatus = JourneyStatus.DRAFT;
 
     if (row.isActive) status = JourneyStatus.ACTIVE;
     if (row.isPaused) status = JourneyStatus.PAUSED;
@@ -518,11 +511,8 @@ export default function TableTemplate<T extends TableDataItem>({
         {
           label: "Yes",
           onClick: async () => {
-            await ApiService.post({
-              url: ApiConfig.deleteFlow,
-              options: {
-                workflowId,
-              },
+            await ApiService.patch({
+              url: "/journeys/delete/" + workflowId,
             });
             refresh();
           },
@@ -550,7 +540,7 @@ export default function TableTemplate<T extends TableDataItem>({
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-[8px] border-[1px] border-gray-200 items-center right-1/2 top-full z-[1000]">
+            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-lg border border-gray-200 items-center right-1/2 top-full z-[1000]">
               {[
                 <Link
                   className="!no-underline"
@@ -615,7 +605,7 @@ export default function TableTemplate<T extends TableDataItem>({
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-[8px] border-[1px] border-gray-200 items-center right-1/2 top-full z-[1000]">
+            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-lg border border-gray-200 items-center right-1/2 top-full z-[1000]">
               {[
                 <Link className="!no-underline" href={`/person/${row.id}`}>
                   <div className="w-full">Edit</div>
@@ -664,7 +654,7 @@ export default function TableTemplate<T extends TableDataItem>({
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-[8px] border-[1px] border-gray-200 items-center right-1/2 top-full z-[1000]">
+            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-lg border border-gray-200 items-center right-1/2 top-full z-[1000]">
               {[
                 <Link
                   className="!no-underline"
@@ -729,7 +719,7 @@ export default function TableTemplate<T extends TableDataItem>({
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-[8px] border-[1px] border-gray-200 items-center right-1/2 top-full z-[1000]">
+            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-lg border border-gray-200 items-center right-1/2 top-full z-[1000]">
               {[
                 <Link
                   className="!no-underline"
@@ -794,7 +784,7 @@ export default function TableTemplate<T extends TableDataItem>({
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-[8px] border-[1px] border-gray-200 items-center right-1/2 top-full z-[1000]">
+            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-lg border border-gray-200 items-center right-1/2 top-full z-[1000]">
               {[
                 <Link
                   className="!no-underline"
@@ -859,7 +849,7 @@ export default function TableTemplate<T extends TableDataItem>({
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-[8px] border-[1px] border-gray-200 items-center right-1/2 top-full z-[1000]">
+            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-lg border border-gray-200 items-center right-1/2 top-full z-[1000]">
               {[
                 <Link
                   className="!no-underline"
@@ -924,7 +914,7 @@ export default function TableTemplate<T extends TableDataItem>({
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-[8px] border-[1px] border-gray-200 items-center right-1/2 top-full z-[1000]">
+            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-lg border border-gray-200 items-center right-1/2 top-full z-[1000]">
               {[
                 <Link
                   className="!no-underline"
@@ -989,7 +979,7 @@ export default function TableTemplate<T extends TableDataItem>({
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-[8px] border-[1px] border-gray-200 items-center right-1/2 top-full z-[1000]">
+            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-lg border border-gray-200 items-center right-1/2 top-full z-[1000]">
               {[
                 <Link className="!no-underline" href={`segment/${row.id}`}>
                   <div className="w-full">Edit</div>
@@ -1070,7 +1060,7 @@ export default function TableTemplate<T extends TableDataItem>({
             leaveFrom="transform opacity-100 scale-100"
             leaveTo="transform opacity-0 scale-95"
           >
-            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-[8px] border-[1px] border-gray-200 items-center right-1/2 top-full z-[1000]">
+            <Menu.Items className="absolute outline-none w-auto flex flex-col bg-gray-50 shadow-md rounded-lg border border-gray-200 items-center right-1/2 top-full z-[1000]">
               {[
                 <Link
                   className="!no-underline"
@@ -1083,7 +1073,7 @@ export default function TableTemplate<T extends TableDataItem>({
                 <button
                   onClick={async () => {
                     await ApiService.post({
-                      url: "/workflows/duplicate/" + row.id,
+                      url: "/journeys/duplicate/" + row.id,
                       options: {},
                     });
                     window.location.reload();
@@ -1182,7 +1172,7 @@ export default function TableTemplate<T extends TableDataItem>({
               ${
                 itemsPerPage === option
                   ? "bg-[linear-gradient(96.63deg,_#6BCDB5_10.79%,_#307179_67.24%,_#122F5C_87.43%)]"
-                  : "border-[#E5E5E5] border-[2px]"
+                  : "border-[#E5E5E5] border-2"
               } 
               flex relative justify-center items-center px-[17px] py-[5px] cursor-pointer max-w-[57px] max-h-[36px] font-[Poppins] font-medium text-[14px] leading-[26px] text-center text-[color]`}
             onClick={() => setItemsPerPage(option)}

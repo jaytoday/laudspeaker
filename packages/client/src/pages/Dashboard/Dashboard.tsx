@@ -81,7 +81,6 @@ const Dashboard = () => {
 
   return (
     <div className="relative bg-white">
-      <Header />
       <div className="flex p-[30px]">
         <div className="border-b-[1px] border-b-[#D3D3D3] w-full flex justify-between flex-row">
           <div className="flex items-center pb-[30px]">
@@ -119,7 +118,7 @@ const Dashboard = () => {
       <div className="flex items-center justify-between p-[0px_30px] space-x-[30px]">
         <div className="shadow-2xl rounded-3xl">
           <div className="h-[299px] bg-white rounded-3xl">
-            <div className="flex flex-row justify-between border-b-[1px] border-b-[#D3D3D3] p-[20px]">
+            <div className="flex flex-row justify-between border-b-[1px] border-b-[#D3D3D3] p-5">
               <p>0 - Sent</p>
               <p>0 - From last day</p>
               <IconButton
@@ -145,7 +144,7 @@ const Dashboard = () => {
                 <p className="p-[2]">View User</p>
               </Popover>
             </div>
-            <div className="p-[20px] bg-white rounded-3xl">
+            <div className="p-5 bg-white rounded-3xl">
               <svg style={{ position: "absolute" }}>
                 <defs>
                   <linearGradient
@@ -180,7 +179,7 @@ const Dashboard = () => {
         </div>
         <div className="shadow-2xl rounded-3xl">
           <div className="h-[299px] bg-white rounded-3xl">
-            <div className="flex flex-row justify-between border-b-[1px] border-b-[#D3D3D3] p-[20px]">
+            <div className="flex flex-row justify-between border-b-[1px] border-b-[#D3D3D3] p-5">
               <p>0 - Delivered</p>
               <p>0 - From last day</p>
               {/* <MoreHorizIcon /> */}
@@ -208,7 +207,7 @@ const Dashboard = () => {
                 <p className="p-[2]">View User</p>
               </Popover>
             </div>
-            <div className="p-[20px] bg-white rounded-3xl">
+            <div className="p-5 bg-white rounded-3xl">
               <svg className="absolute">
                 <defs>
                   <linearGradient
@@ -247,7 +246,7 @@ const Dashboard = () => {
         </div>
         <div className="shadow-2xl rounded-3xl">
           <div className="h-[299px] bg-white rounded-3xl">
-            <div className="flex flex-row justify-between border-b-[1px] border-b-[#D3D3D3] p-[20px]">
+            <div className="flex flex-row justify-between border-b-[1px] border-b-[#D3D3D3] p-5">
               <p>Deliverability</p>
               {/* <MoreHorizIcon /> */}
               <IconButton
@@ -289,7 +288,7 @@ const Dashboard = () => {
       </div>
       <div className="p-[37px_30px]">
         <div className="bg-white shadow-2xl rounded-3xl">
-          <div className="flex flex-row justify-between items-center p-[20px] border-b-[1px] border-b-[#D3D3D3] h-[104px]">
+          <div className="flex flex-row justify-between items-center p-5 border-b-[1px] border-b-[#D3D3D3] h-[104px]">
             <h3 className="font-[Inter] font-semibold text-[25px] leading-[38px]">
               Active Journeys
             </h3>
@@ -303,7 +302,7 @@ const Dashboard = () => {
               Go To Customers
             </GenericButton>
           </div>
-          <div className="p-[20px]">
+          <div className="p-5">
             <RecentActivity activities={formattedActivities} />
           </div>
         </div>

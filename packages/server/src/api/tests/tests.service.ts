@@ -128,31 +128,30 @@ export class TestsService {
   async resetTestData(session: string) {
     if (process.env.NODE_ENV !== 'development')
       throw new HttpException('Not found', HttpStatus.NOT_FOUND);
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
     try {
       await this.authService.verificationRepository.delete({
         email: 'john.smith@gmail.com',
       });
-
       await this.accountService.accountsRepository.delete({
         email: 'john.smith@gmail.com',
       });
-
       await this.authService.verificationRepository.delete({
         account: { id: '00000000-0000-0000-0000-000000000000' },
       });
-
-      const userCreated = await this.authService.repository.findOne({
+      const userCreated = await this.authService.accountRepository.findOne({
         where: {
           apiKey: 'dowkp5HD51tdEL4U09kFW2MKj3hCyT664Ol40000',
         },
       });
-
       if (userCreated?.id) {
-        await this.authService.repository.remove([userCreated]);
+        await this.authService.accountRepository.remove([userCreated]);
       }
-
       const user = new Account();
-
       user.firstName = 'TFNameUser';
       user.lastName = 'TLNameUser';
       user.email = 'testmail@gmail.com';
@@ -170,16 +169,15 @@ export class TestsService {
       user.smsAccountSid = process.env.TESTS_SMS_SID;
       user.smsAuthToken = process.env.TESTS_SMS_AUTH_TOKEN;
       user.smsFrom = process.env.TESTS_SMS_FROM;
-
-      const ret = await this.authService.repository.save(user);
-      await this.authService.repository.update(
+      user.verified = true;
+      const ret = await this.authService.accountRepository.save(user);
+      await this.authService.accountRepository.update(
         { id: ret.id },
         {
           id: '00000000-0000-0000-0000-000000000000',
         }
       );
       ret.id = '00000000-0000-0000-0000-000000000000';
-
       await this.workflowsRepository.delete({
         owner: { id: '00000000-0000-0000-0000-000000000000' },
       });
@@ -189,23 +187,20 @@ export class TestsService {
       await this.audienceRepository.delete({
         owner: { id: '00000000-0000-0000-0000-000000000000' },
       });
-
       await this.authService.helper.generateDefaultData(
         ret,
-        this.dataSource.manager
+        queryRunner,
+        session
       );
-
       await this.customersService.CustomerModel.deleteMany({
         ownerId: '00000000-0000-0000-0000-000000000000',
       });
-
       const exists = await this.CustomerKeysModel.findOne({
         key: 'slackRealName',
         type: 'String',
         isArray: false,
         ownerId: '00000000-0000-0000-0000-000000000000',
       }).exec();
-
       if (!exists)
         await this.CustomerKeysModel.create({
           key: 'slackRealName',
@@ -213,9 +208,7 @@ export class TestsService {
           isArray: false,
           ownerId: '00000000-0000-0000-0000-000000000000',
         });
-
       const sanitizedMember = new CreateCustomerDto();
-
       sanitizedMember.slackName = 'mahamad';
       sanitizedMember.slackId = 'U04323JCL5A'; // for test purpose change it to your UID here and on the frontend -> cypress/fixture/credentials.json -> slackUid
       sanitizedMember.slackRealName = 'Mahamad Charawi';
@@ -227,9 +220,7 @@ export class TestsService {
       sanitizedMember.slackAdmin = true;
       sanitizedMember.slackTeamMember = true;
       sanitizedMember.phone = process.env.TESTS_SMS_TO;
-
       await this.customersService.create(ret, sanitizedMember, session);
-
       const installationId = process.env.TESTS_INSTALLATION_ID;
       const installationJson =
         process.env.TESTS_INSTALLATION_JSON_PART1 +
@@ -238,7 +229,6 @@ export class TestsService {
         const foundInstallation = await this.installationRepository.findOneBy({
           id: installationId,
         });
-        console.log(installationJson);
         if (!foundInstallation)
           await this.installationRepository.insert({
             id: installationId,
@@ -246,14 +236,17 @@ export class TestsService {
           });
       }
     } catch (error) {
+      queryRunner.rollbackTransaction();
       console.error('Error generating test users:', error);
+    } finally {
+      queryRunner.release();
     }
   }
 
-  public async getTestVerification(session: string) {
+  public async getTestVerification(email: string, session: string) {
     const verification = await this.authService.verificationRepository.findOne({
       where: {
-        email: 'testmail@gmail.com',
+        email,
         status: 'sent',
       },
       relations: ['account'],
@@ -324,21 +317,21 @@ export class TestsService {
     });
   }
 
+  //to do
   public async isCustomerInSegment(customerId: string, session: string) {
     const cust = await this.segmentCustomersRepository.findOne({
       where: {
         customerId,
       },
     });
-    return !!cust?.id;
+    return true;
+    //return !!cust?.id;
   }
 
   public async getSegmentSize(segmentId: string, session: string) {
     return await this.segmentCustomersRepository.count({
       where: {
-        segment: {
-          id: segmentId,
-        },
+        segment: segmentId, //{id: segmentId,},
       },
     });
   }

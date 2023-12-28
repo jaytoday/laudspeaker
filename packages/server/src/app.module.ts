@@ -48,11 +48,19 @@ import { SlackModule } from './api/slack/slack.module';
 import { WebhookJobsModule } from './api/webhook-jobs/webhook-jobs.module';
 import { WebhookJob } from './api/webhook-jobs/entities/webhook-job.entity';
 import { AccountsModule } from './api/accounts/accounts.module';
+import { StepsModule } from './api/steps/steps.module';
 import { EventsModule } from './api/events/events.module';
 import { ModalsModule } from './api/modals/modals.module';
 import { WebsocketsModule } from './websockets/websockets.module';
 import traverse from 'traverse';
 import { klona } from 'klona/full';
+import { JourneysModule } from './api/journeys/journeys.module';
+import { RedlockModule } from './api/redlock/redlock.module';
+import { RedlockService } from './api/redlock/redlock.service';
+import { RavenModule } from 'nest-raven';
+import { KafkaModule } from './api/kafka/kafka.module';
+import { JourneyLocation } from './api/journeys/entities/journey-location.entity';
+import { JourneyLocationsService } from './api/journeys/journey-locations.service';
 
 const sensitiveKeys = [
   /cookie/i,
@@ -139,7 +147,10 @@ const formatMongoConnectionString = (mongoConnectionString: string) => {
           }),
         ]
       : []),
-    MongooseModule.forRoot(process.env.MONGOOSE_URL),
+    MongooseModule.forRoot(
+      formatMongoConnectionString(process.env.MONGOOSE_URL)
+      // process.env.MONGOOSE_URL
+    ),
     BullModule.forRoot({
       connection: {
         host: process.env.REDIS_HOST ?? 'localhost',
@@ -195,6 +206,7 @@ const formatMongoConnectionString = (mongoConnectionString: string) => {
       State,
       Recovery,
       WebhookJob,
+      JourneyLocation,
     ]),
     BullModule.registerQueue({
       name: 'integrations',
@@ -211,6 +223,9 @@ const formatMongoConnectionString = (mongoConnectionString: string) => {
     BullModule.registerQueue({
       name: 'slack',
     }),
+    BullModule.registerQueue({
+      name: 'transition',
+    }),
     IntegrationsModule,
     WorkflowsModule,
     JobsModule,
@@ -223,9 +238,14 @@ const formatMongoConnectionString = (mongoConnectionString: string) => {
     EventsModule,
     ModalsModule,
     WebsocketsModule,
+    StepsModule,
+    JourneysModule,
+    RedlockModule,
+    RavenModule,
+    KafkaModule,
   ],
   controllers: [AppController],
-  providers: [CronService],
+  providers: [CronService, RedlockService, JourneyLocationsService],
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {

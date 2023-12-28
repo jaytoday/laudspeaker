@@ -1,7 +1,9 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Prop, Schema, SchemaFactory, raw } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
 export type CustomerDocument = Customer & Document;
+
+export type JourneyEnrollmentsDates = Record<string, Date>;
 
 @Schema({ strict: false })
 export class Customer {
@@ -16,6 +18,15 @@ export class Customer {
 
   @Prop()
   workflows: string[];
+
+  @Prop()
+  journeys: string[];
+
+  @Prop({
+    type: Object,
+    obj: {},
+  })
+  journeyEnrollmentsDates: JourneyEnrollmentsDates;
 
   @Prop()
   ownerId: string;
@@ -36,6 +47,12 @@ export class Customer {
   phDeviceToken: string;
 
   @Prop()
+  androidDeviceToken: string;
+
+  @Prop()
+  iosDeviceToken: string;
+
+  @Prop()
   phCustom: string;
 
   @Prop()
@@ -43,45 +60,6 @@ export class Customer {
 
   @Prop()
   phInitialOs: string;
-
-  // @Prop()
-  // phGeoIpTimeZone: string;
-
-  // @Prop()
-  // phGeoIp: {
-  //   type: {
-  //     type: String,
-  //     default: 'Point',
-  //   },
-  //   coordinates: {
-  //     type: [Number],
-  //     default: undefined,
-  //     required: true
-  //   },
-  //   index: '2dsphere'
-  // };
-
-  // @Prop()
-  // phInitialGeoIp:{
-  //   type: {
-  //     type: String,
-  //     default: 'Point',
-  //   },
-  //   coordinates: {
-  //     type: [Number],
-  //     default: undefined,
-  //     required: true
-  //   },
-  //   index: '2dsphere'
-  // }
-
-  //phGeoip_latitude
-  //phGeoip_longitude
-  //phInitial_geoip_latitude
-  //phInitial_geoip_longitude
-
-  // @Prop()
-  // posthogEmail: string;
 
   @Prop()
   rudderId: string;
@@ -124,6 +102,9 @@ export class Customer {
 
   @Prop()
   isFreezed?: boolean;
+
+  @Prop(raw({}))
+  customComponents: Record<string, any>;
 }
 
 export const CustomerSchema = SchemaFactory.createForClass(Customer);

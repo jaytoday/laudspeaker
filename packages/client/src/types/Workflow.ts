@@ -1,4 +1,5 @@
 import { MarkerType } from "reactflow";
+import { QueryStatementType } from "reducers/flow-builder.reducer";
 
 export enum TriggerType {
   EVENT = "eventBased",
@@ -6,11 +7,10 @@ export enum TriggerType {
   TIME_WINDOW = "timeWindow",
 }
 
-export enum MessagesTypes {
+export enum MessageType {
   EMAIL = "email",
   SLACK = "slack",
   SMS = "sms",
-  FIREBASE = "firebase",
   PUSH = "push",
   WEBHOOK = "webhook",
   MODAL = "modal",
@@ -49,9 +49,15 @@ export interface EventProps {
   toTime?: string;
 }
 
-export enum ProviderTypes {
-  Posthog = "posthog",
-  Custom = "custom",
+export enum ProviderType {
+  POSTHOG = "posthog",
+  CUSTOM = "custom",
+  TRACKER = "tracker",
+  WU_ATTRIBUTE = "wu_attribute",
+  EMAIL_MESSAGE = "email_message",
+  SMS_MESSAGE = "sms_message",
+  PUSH_MESSAGE = "push_message",
+  IN_APP_MESSAGE = "in_app_message",
 }
 
 export interface Trigger {
@@ -60,7 +66,7 @@ export interface Trigger {
   type: TriggerType;
   source?: string;
   dest?: string[];
-  providerType?: ProviderTypes;
+  providerType?: ProviderType;
   providerParams?: string | "track" | "page";
   properties?: EventProps;
 }
@@ -87,10 +93,8 @@ export interface Node {
     primary: boolean;
     messages: { type: string; templateId: number }[];
     triggers: Trigger[];
-    audienceId: string;
-    isSelected: boolean;
-    needsUpdate: boolean;
     dataTriggers?: Trigger[];
+    audienceId: string;
   };
   type: string;
   width: number;
@@ -110,6 +114,7 @@ export interface Node {
 export interface VisualLayout {
   edges: Edge[];
   nodes: Node[];
+  triggers: Trigger[];
 }
 
 export interface Workflow {
@@ -119,8 +124,9 @@ export interface Workflow {
   isPaused: boolean;
   isStopped: boolean;
   isDeleted: boolean;
-  rules: string[];
   visualLayout: VisualLayout;
   isDynamic: boolean;
   filter?: { id: string };
+  latestSave: string;
+  enrolledCustomers?: number;
 }

@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, QueryRunner, Like, Repository, FindManyOptions } from 'typeorm';
 import { Account } from '../accounts/entities/accounts.entity';
 import {
   Customer,
@@ -17,7 +17,6 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
-import { Job, Queue } from 'bullmq';
 import {
   FallBackAction,
   Template,
@@ -31,6 +30,7 @@ import {
   QueueEventsHost,
   QueueEventsListener,
 } from '@nestjs/bullmq';
+import { Job, Queue } from 'bullmq';
 import { Installation } from '../slack/entities/installation.entity';
 import { SlackService } from '../slack/slack.service';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
@@ -42,7 +42,6 @@ import { Response, fetch } from 'undici';
 import { Model } from 'mongoose';
 import { Liquid } from 'liquidjs';
 import { TestWebhookDto } from './dto/test-webhook.dto';
-import { WebhooksService } from '../webhooks/webhooks.service';
 import wait from '../../utils/wait';
 import { ModalsService } from '../modals/modals.service';
 import { WebsocketGateway } from '../../websockets/websocket.gateway';
@@ -63,7 +62,6 @@ export class TemplatesService extends QueueEventsHost {
     @Inject(WebsocketGateway)
     private websocketGateway: WebsocketGateway,
     @Inject(SlackService) private slackService: SlackService,
-    @Inject(WebhooksService) private webhooksService: WebhooksService,
     @Inject(ModalsService) private modalsService: ModalsService,
     @InjectQueue('message') private readonly messageQueue: Queue,
     @InjectQueue('webhooks') private readonly webhooksQueue: Queue,
@@ -281,37 +279,44 @@ export class TemplatesService extends QueueEventsHost {
     createTemplateDto: CreateTemplateDto,
     session: string
   ) {
-    const template = new Template();
-    template.type = createTemplateDto.type;
-    template.name = createTemplateDto.name;
-    switch (template.type) {
-      case TemplateType.EMAIL:
-        template.subject = createTemplateDto.subject;
-        template.text = createTemplateDto.text;
-        if (createTemplateDto.cc) template.cc = createTemplateDto.cc;
-        template.style = createTemplateDto.style;
-        break;
-      case TemplateType.SLACK:
-        template.slackMessage = createTemplateDto.slackMessage;
-        break;
-      case TemplateType.SMS:
-        template.smsText = createTemplateDto.smsText;
-        break;
-      case TemplateType.FIREBASE:
-        template.pushText = createTemplateDto.pushText;
-        template.pushTitle = createTemplateDto.pushTitle;
-        break;
-      case TemplateType.WEBHOOK:
-        template.webhookData = createTemplateDto.webhookData;
-        break;
-      case TemplateType.MODAL:
-        template.modalState = createTemplateDto.modalState;
-        break;
+    try {
+      const template = new Template();
+      template.type = createTemplateDto.type;
+      template.name = createTemplateDto.name;
+      switch (template.type) {
+        case TemplateType.EMAIL:
+          template.subject = createTemplateDto.subject;
+          template.text = createTemplateDto.text;
+          if (createTemplateDto.cc) template.cc = createTemplateDto.cc;
+          template.style = createTemplateDto.style;
+          break;
+        case TemplateType.SLACK:
+          template.slackMessage = createTemplateDto.slackMessage;
+          break;
+        case TemplateType.SMS:
+          template.smsText = createTemplateDto.smsText;
+          break;
+        case TemplateType.PUSH:
+          // UPDATE WITH PUSH LOGIC
+          break;
+        case TemplateType.WEBHOOK:
+          template.webhookData = createTemplateDto.webhookData;
+          break;
+        case TemplateType.MODAL:
+          template.modalState = createTemplateDto.modalState;
+          break;
+        case TemplateType.CUSTOM_COMPONENT:
+          template.customEvents = createTemplateDto.customEvents;
+          template.customFields = createTemplateDto.customFields;
+          break;
+      }
+      return this.templatesRepository.save({
+        ...template,
+        owner: { id: account.id },
+      });
+    } catch (error) {
+      this.logger.error(`Api error: ${error}`);
     }
-    return this.templatesRepository.save({
-      ...template,
-      owner: { id: account.id },
-    });
   }
 
   /**
@@ -449,25 +454,26 @@ export class TemplatesService extends QueueEventsHost {
           trackingEmail: email,
         });
         break;
-      case TemplateType.FIREBASE:
-        job = await this.messageQueue.add(MessageType.FIREBASE, {
-          accountId: account.id,
-          audienceId,
-          customerId,
-          firebaseCredentials: account.firebaseCredentials,
-          phDeviceToken: customer.phDeviceToken,
-          pushText: await this.parseApiCallTags(
-            template.pushText,
-            filteredTags
-          ),
-          pushTitle: await this.parseApiCallTags(
-            template.pushTitle,
-            filteredTags
-          ),
-          trackingEmail: email,
-          tags: filteredTags,
-          templateId: template.id,
-        });
+      case TemplateType.PUSH:
+        // TODO: update for PUSH
+        // job = await this.messageQueue.add(MessageType.PUSH_FIREBASE, {
+        //   accountId: account.id,
+        //   audienceId,
+        //   customerId,
+        //   firebaseCredentials: account.firebaseCredentials,
+        //   phDeviceToken: customer.phDeviceToken,
+        //   pushText: await this.parseApiCallTags(
+        //     template.pushText,
+        //     filteredTags
+        //   ),
+        //   pushTitle: await this.parseApiCallTags(
+        //     template.pushTitle,
+        //     filteredTags
+        //   ),
+        //   trackingEmail: email,
+        //   tags: filteredTags,
+        //   templateId: template.id,
+        // });
         break;
       case TemplateType.WEBHOOK:
         if (template.webhookData) {
@@ -499,13 +505,27 @@ export class TemplatesService extends QueueEventsHost {
     session: string,
     take = 100,
     skip = 0,
+    search = '',
     orderBy?: keyof Template,
     orderType?: 'asc' | 'desc',
-    showDeleted?: boolean
+    showDeleted?: boolean,
+    type?: TemplateType | TemplateType[]
   ): Promise<{ data: Template[]; totalPages: number }> {
+    const typeConvertedCheck: FindManyOptions<Template>['where'] = {};
+
+    if (Array.isArray(type)) {
+      typeConvertedCheck.type = In(type);
+    } else {
+      typeConvertedCheck.type = type;
+    }
     const totalPages = Math.ceil(
       (await this.templatesRepository.count({
-        where: { owner: { id: account.id } },
+        where: {
+          name: Like(`%${search}%`),
+          owner: { id: account.id },
+          isDeleted: In([!!showDeleted, false]),
+          ...typeConvertedCheck,
+        },
       })) / take || 1
     );
     const orderOptions = {};
@@ -514,8 +534,10 @@ export class TemplatesService extends QueueEventsHost {
     }
     const templates = await this.templatesRepository.find({
       where: {
+        name: Like(`%${search}%`),
         owner: { id: account.id },
         isDeleted: In([!!showDeleted, false]),
+        ...typeConvertedCheck,
       },
       order: orderOptions,
       take: take < 100 ? take : 100,
@@ -538,6 +560,16 @@ export class TemplatesService extends QueueEventsHost {
     });
   }
 
+  transactionalFindOneById(
+    account: Account,
+    id: string,
+    queryRunner: QueryRunner
+  ): Promise<Template> {
+    return queryRunner.manager.findOneBy(Template, {
+      id: id,
+    });
+  }
+
   findBy(account: Account, type: TemplateType): Promise<Template[]> {
     return this.templatesRepository.findBy({
       owner: { id: account.id },
@@ -547,13 +579,13 @@ export class TemplatesService extends QueueEventsHost {
 
   update(
     account: Account,
-    name: string,
+    id: string,
     updateTemplateDto: UpdateTemplateDto,
     session: string
   ) {
     return this.templatesRepository.update(
-      { owner: { id: (<Account>account).id }, name: name },
-      { ...updateTemplateDto }
+      { owner: { id: (<Account>account).id }, id },
+      { ...updateTemplateDto, updatedAt: new Date() }
     );
   }
 
@@ -563,15 +595,15 @@ export class TemplatesService extends QueueEventsHost {
         owner: { id: (<Account>account).id },
         id,
       },
-      { isDeleted: true }
+      { isDeleted: true, updatedAt: new Date() }
     );
   }
 
-  async duplicate(account: Account, name: string, session: string) {
+  async duplicate(account: Account, id: string, session: string) {
     const foundTemplate = await this.templatesRepository.findOne({
       where: {
         owner: { id: account.id },
-        name,
+        id,
       },
       relations: ['owner'],
     });
@@ -586,7 +618,10 @@ export class TemplatesService extends QueueEventsHost {
       type,
       smsText,
       webhookData,
+      pushObject,
       modalState,
+      customEvents,
+      customFields,
     } = foundTemplate;
 
     const ownerId = owner.id;
@@ -608,7 +643,7 @@ export class TemplatesService extends QueueEventsHost {
       '-copy-' +
       (res?.[0]?.count || '0');
 
-    await this.templatesRepository.save({
+    const tmp = await this.templatesRepository.save({
       name: newName,
       owner: { id: ownerId },
       slackMessage,
@@ -617,9 +652,14 @@ export class TemplatesService extends QueueEventsHost {
       text,
       type,
       smsText,
+      pushObject,
       webhookData,
       modalState,
+      customEvents,
+      customFields,
     });
+
+    return { id: tmp.id };
   }
 
   async findUsedInJourneys(account: Account, id: string, session: string) {

@@ -13,15 +13,12 @@ import {
 } from './api/customers/schemas/customer-keys.schema';
 import { isDateString, isEmail } from 'class-validator';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Verification } from './api/auth/entities/verification.entity';
 import { EventDocument } from './api/events/schemas/event.schema';
 import { EventKeysDocument } from './api/events/schemas/event-keys.schema';
 import { Event } from './api/events/schemas/event.schema';
 import { EventKeys } from './api/events/schemas/event-keys.schema';
-import { JobsService } from './api/jobs/jobs.service';
-import { WorkflowsService } from './api/workflows/workflows.service';
-import { TimeJobStatus } from './api/jobs/entities/job.entity';
 import { IntegrationsService } from './api/integrations/integrations.service';
 import {
   Integration,
@@ -44,15 +41,23 @@ import {
 import twilio from 'twilio';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import client from '@sendgrid/client';
-import { ClientResponse } from '@sendgrid/mail';
 import { ModalsService } from './api/modals/modals.service';
 import { randomUUID } from 'crypto';
+import { StepsService } from './api/steps/steps.service';
+import { StepType } from './api/steps/types/step.interface';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { JourneysService } from './api/journeys/journeys.service';
+import { RedlockService } from './api/redlock/redlock.service';
+import { Lock } from 'redlock';
+import * as _ from 'lodash';
+import { JourneyLocationsService } from './api/journeys/journey-locations.service';
+import { query } from 'winston';
+import { Journey } from './api/journeys/entities/journey.entity';
+import { EntryTiming } from './api/journeys/types/additional-journey-settings.interface';
 
 const BATCH_SIZE = 500;
 const KEYS_TO_SKIP = ['__v', '_id', 'audiences', 'ownerId'];
-
-const MAX_DATE = new Date(8640000000000000);
-const MIN_DATE = new Date(0);
 
 @Injectable()
 export class CronService {
@@ -64,9 +69,11 @@ export class CronService {
       : 'http://localhost:8123',
     username: process.env.CLICKHOUSE_USER ?? 'default',
     password: process.env.CLICKHOUSE_PASSWORD ?? '',
+    database: process.env.CLICKHOUSE_DB ?? 'default',
   });
 
   constructor(
+    private dataSource: DataSource,
     @Inject(WINSTON_MODULE_NEST_PROVIDER)
     private readonly logger: LoggerService,
     @InjectModel(Customer.name)
@@ -83,19 +90,83 @@ export class CronService {
     private verificationRepository: Repository<Verification>,
     @InjectRepository(Recovery)
     public readonly recoveryRepository: Repository<Recovery>,
-    @Inject(JobsService) private jobsService: JobsService,
+    @Inject(JourneysService) private journeysService: JourneysService,
     @Inject(IntegrationsService)
     private integrationsService: IntegrationsService,
-    @Inject(WorkflowsService) private workflowsService: WorkflowsService,
     @Inject(WebhookJobsService) private webhookJobsService: WebhookJobsService,
     @Inject(AccountsService) private accountsService: AccountsService,
-    @Inject(ModalsService) private modalsService: ModalsService
+    @Inject(ModalsService) private modalsService: ModalsService,
+    @Inject(StepsService) private stepsService: StepsService,
+    @Inject(JourneyLocationsService)
+    private journeyLocationsService: JourneyLocationsService,
+    @InjectQueue('transition') private readonly transitionQueue: Queue,
+    @Inject(RedlockService)
+    private readonly redlockService: RedlockService
   ) {}
+
+  log(message, method, session, user = 'ANONYMOUS') {
+    this.logger.log(
+      message,
+      JSON.stringify({
+        class: CronService.name,
+        method: method,
+        session: session,
+        user: user,
+      })
+    );
+  }
+  debug(message, method, session, user = 'ANONYMOUS') {
+    this.logger.debug(
+      message,
+      JSON.stringify({
+        class: CronService.name,
+        method: method,
+        session: session,
+        user: user,
+      })
+    );
+  }
+  warn(message, method, session, user = 'ANONYMOUS') {
+    this.logger.warn(
+      message,
+      JSON.stringify({
+        class: CronService.name,
+        method: method,
+        session: session,
+        user: user,
+      })
+    );
+  }
+  error(error, method, session, user = 'ANONYMOUS') {
+    this.logger.error(
+      error.message,
+      error.stack,
+      JSON.stringify({
+        class: CronService.name,
+        method: method,
+        session: session,
+        cause: error.cause,
+        name: error.name,
+        user: user,
+      })
+    );
+  }
+  verbose(message, method, session, user = 'ANONYMOUS') {
+    this.logger.verbose(
+      message,
+      JSON.stringify({
+        class: CronService.name,
+        method: method,
+        session: session,
+        user: user,
+      })
+    );
+  }
 
   @Cron(CronExpression.EVERY_HOUR)
   async handleCustomerKeysCron() {
+    const session = randomUUID();
     try {
-      this.logger.log('Cron customer keys job started');
       let current = 0;
       const documentsCount = await this.customerModel
         .estimatedDocumentCount()
@@ -163,21 +234,15 @@ export class CronService {
             .exec();
         }
       }
-
-      this.logger.log(
-        `Cron customer keys job finished, checked ${documentsCount} records, found ${
-          Object.keys(keys).length
-        } keys`
-      );
     } catch (e) {
-      this.logger.error('Cron error: ' + e);
+      this.error(e, this.handleCustomerKeysCron.name, session);
     }
   }
 
   @Cron(CronExpression.EVERY_HOUR)
   async handleEventKeysCron() {
+    const session = randomUUID();
     try {
-      this.logger.log('Cron event keys job started');
       let current = 0;
       const documentsCount = await this.eventModel
         .estimatedDocumentCount()
@@ -248,33 +313,17 @@ export class CronService {
             await this.eventKeysModel.insertMany(batchToSave);
             batchToSave = [];
           }
-
-          // await this.eventKeysModel
-          //   .updateOne(
-          //     { key },
-          //     {
-          //       $set: eventKey,
-          //     },
-          //     { upsert: true }
-          //   )
-          //   .exec();
         }
-
         await this.eventKeysModel.insertMany(batchToSave);
       }
-
-      this.logger.log(
-        `Cron event keys job finished, checked ${documentsCount} records, found ${
-          Object.keys(keys).length
-        } keys`
-      );
     } catch (e) {
-      this.logger.error('Cron error: ' + e);
+      this.error(e, this.handleEventKeysCron.name, session);
     }
   }
 
   @Cron(CronExpression.EVERY_HOUR)
   async handleVerificationCheck() {
+    const session = randomUUID();
     try {
       await this.verificationRepository
         .createQueryBuilder()
@@ -284,7 +333,7 @@ export class CronService {
         .update({ status: 'expired' })
         .execute();
     } catch (e) {
-      this.logger.error('Cron error: ' + e);
+      this.error(e, this.handleVerificationCheck.name, session);
     }
   }
 
@@ -312,49 +361,82 @@ export class CronService {
     }
   }
 
-  @Cron(CronExpression.EVERY_10_SECONDS)
-  async handleTimeTriggers() {
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleTimeBasedSteps() {
+    let err: any;
     const session = randomUUID();
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
     try {
-      const date = new Date();
-      const jobs = await this.jobsService.jobsRepository.find({
-        where: [
-          { executionTime: Between(MIN_DATE, date) },
-          {
-            startTime: Between(MIN_DATE, date),
-            endTime: Between(date, MAX_DATE),
-            workflow: {
-              isActive: true,
-              isDeleted: false,
-              isPaused: false,
-              isStopped: false,
-            },
-            status: TimeJobStatus.PENDING,
-          },
-        ],
-        relations: ['owner', 'from', 'to', 'workflow'],
-      });
-      for (const job of jobs) {
-        try {
-          await this.jobsService.jobsRepository.save({
-            ...job,
-            status: TimeJobStatus.IN_PROGRESS,
-          });
-          if (await this.customerModel.findById(job.customer).exec()) {
-            await this.workflowsService.timeTick(job, session);
+      const journeys = await this.journeysService.allActiveTransactional(
+        queryRunner
+      );
+      for (
+        let journeyIndex = 0;
+        journeyIndex < journeys.length;
+        journeyIndex++
+      ) {
+        const locations =
+          await this.journeyLocationsService.findAllStaticCustomersInTimeBasedSteps(
+            journeys[journeyIndex],
+            session,
+            queryRunner
+          );
+        for (
+          let locationsIndex = 0;
+          locationsIndex < locations.length;
+          locationsIndex++
+        ) {
+          const step = await this.stepsService.findByID(
+            String(locations[locationsIndex].step),
+            session,
+            null,
+            queryRunner
+          );
+          let branch;
+          // Set branch to -1 for wait until
+          if (step.type === StepType.WAIT_UNTIL_BRANCH) {
+            //Wait until time branch isnt set, continue
+            if (!step.metadata.timeBranch) {
+              continue;
+            }
+            branch = -1;
           }
-          await this.jobsService.jobsRepository.delete({ id: job.id });
-        } catch (e) {
-          this.logger.error('Time job error: ' + e);
+          try {
+            await this.journeyLocationsService.lock(
+              locations[locationsIndex],
+              session,
+              undefined,
+              queryRunner
+            );
+            this.transitionQueue.add(step.type, {
+              step: step,
+              ownerID: step.owner.id,
+              session: session,
+              journeyID: journeys[journeyIndex].id,
+              customerID: locations[locationsIndex].customer,
+              branch,
+            });
+          } catch (e) {
+            this.error(e, this.handleTimeBasedSteps.name, session);
+          }
         }
       }
+      await queryRunner.commitTransaction();
     } catch (e) {
-      this.logger.error('Cron error: ' + e);
+      err = e;
+      this.error(e, this.handleTimeBasedSteps.name, session);
+      await queryRunner.rollbackTransaction();
+    } finally {
+      await queryRunner.release();
+      if (err) throw err;
     }
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_NOON)
   async handleMissedMailgunEvents() {
+    const session = randomUUID();
     try {
       // Get all pending Mailgun Jobs and accounts
       const mailgunJobs = await this.webhookJobsService.findAllByProvider(
@@ -421,7 +503,7 @@ export class CronService {
                     eventProvider: ClickHouseEventProvider.MAILGUN,
                     createdAt: new Date(
                       events.items[k].timestamp * 1000
-                    ).toUTCString(),
+                    ).toISOString(),
                     processed: false,
                   };
                   messagesToInsert.push(clickHouseRecord);
@@ -439,14 +521,13 @@ export class CronService {
         await this.webhookJobsService.remove(mailgunJobs[i].id);
       }
     } catch (err) {
-      this.logger.error(
-        `app.cron.service.ts:CronService.handleMissedMailgunEvents: Error: ${err}`
-      );
+      this.error(err, this.handleMissedMailgunEvents.name, session);
     }
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_NOON)
   async handleMissedSendgridEvents() {
+    const session = randomUUID();
     try {
       // Get all pending Twilio Jobs and accounts
       const sendgridJobs = await this.webhookJobsService.findAllByProvider(
@@ -517,7 +598,7 @@ export class CronService {
                       messageId: rowObject.messageId,
                       event: message.status,
                       eventProvider: ClickHouseEventProvider.TWILIO,
-                      createdAt: new Date().toUTCString(),
+                      createdAt: new Date().toISOString(),
                       userId: accounts[j].id,
                       processed: false,
                     };
@@ -558,14 +639,13 @@ export class CronService {
         await this.webhookJobsService.remove(sendgridJobs[i].id);
       }
     } catch (err) {
-      this.logger.error(
-        `app.cron.service.ts:CronService.handleMissedSendgridEvents: Error: ${err}`
-      );
+      this.error(err, this.handleMissedSendgridEvents.name, session);
     }
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_NOON)
   async handleMissedTwilioEvents() {
+    const session = randomUUID();
     try {
       // Get all pending Twilio Jobs and accounts
       const twilioJobs = await this.webhookJobsService.findAllByProvider(
@@ -624,7 +704,7 @@ export class CronService {
                       messageId: rowObject.messageId,
                       event: message.status,
                       eventProvider: ClickHouseEventProvider.TWILIO,
-                      createdAt: new Date().toUTCString(),
+                      createdAt: new Date().toISOString(),
                       userId: accounts[j].id,
                       processed: false,
                     };
@@ -662,14 +742,13 @@ export class CronService {
         await this.webhookJobsService.remove(twilioJobs[i].id);
       }
     } catch (err) {
-      this.logger.error(
-        `app.cron.service.ts:CronService.handleMissedTwilioEvents: Error: ${err}`
-      );
+      this.error(err, this.handleMissedTwilioEvents.name, session);
     }
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async handleRecovery() {
+    const session = randomUUID();
     try {
       await this.recoveryRepository
         .createQueryBuilder()
@@ -677,16 +756,138 @@ export class CronService {
         .delete()
         .execute();
     } catch (e) {
-      this.logger.error('Recovery cron error: ' + e);
+      this.error(e, this.handleRecovery.name, session);
     }
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async handleExpiredModalEvents() {
+    const session = randomUUID();
     try {
       await this.modalsService.deleteExpiredModalEvents();
     } catch (e) {
-      this.logger.error('Expired modal events cron error: ' + e);
+      this.error(e, this.handleExpiredModalEvents.name, session);
+    }
+  }
+
+  @Cron(CronExpression.EVERY_30_MINUTES)
+  async cleanTrashSteps() {
+    const session = randomUUID();
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    this.log('Start cleaning unused steps', this.cleanTrashSteps.name, session);
+    try {
+      const data = await queryRunner.query(`
+          WITH active_journeys AS (
+            SELECT id, "visualLayout"
+            FROM journey
+            WHERE "isActive" = true or "isPaused" = true or "isStopped" = true or "isDeleted" = true
+        )
+        
+        , step_ids_to_keep AS (
+            SELECT 
+                aj.id as journey_id,
+                (node->'data'->>'stepId')::uuid as step_id
+            FROM active_journeys aj
+            CROSS JOIN LATERAL jsonb_array_elements("visualLayout"->'nodes') as node
+            WHERE node->'data' ? 'stepId'
+        )
+        
+        DELETE FROM step s
+        WHERE s."journeyId" IN (SELECT id FROM active_journeys)
+        AND (s."journeyId", s.id) NOT IN (SELECT journey_id, step_id FROM step_ids_to_keep);
+      `);
+      await queryRunner.commitTransaction();
+      this.log(
+        `Finish cleaning unused steps, removed: ${data[1]}`,
+        this.cleanTrashSteps.name,
+        session
+      );
+    } catch (e) {
+      await queryRunner.rollbackTransaction();
+      this.error(e, this.cleanTrashSteps.name, session);
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  @Cron(CronExpression.EVERY_30_SECONDS)
+  async requeueMessages() {
+    let lock: Lock;
+    const session = randomUUID();
+    const queryRunner = this.dataSource.createQueryRunner();
+    try {
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
+      let requeuedMessages = await this.stepsService.getRequeuedMessages(
+        session,
+        queryRunner
+      );
+      this.log(
+        `Checking for messages to requeue... ${requeuedMessages.length} found`,
+        this.requeueMessages.name,
+        session
+      );
+      for (let requeue of requeuedMessages) {
+        this.log(
+          `Requeuing message: ${JSON.stringify(requeue)}`,
+          this.requeueMessages.name,
+          session
+        );
+        lock = await this.redlockService.acquire(
+          `${requeue.customerId}${requeue.step.journey.id}`
+        );
+        this.transitionQueue.add(StepType.MESSAGE, {
+          ownerId: requeue.owner.id,
+          step: requeue.step,
+          session,
+          customerID: requeue.customerId,
+          lock,
+        });
+      }
+    } catch (e) {
+      this.error(
+        `Requeue messages failed with exception. ${e}`,
+        this.requeueMessages.name,
+        session,
+        undefined
+      );
+      if (lock) {
+        lock.release();
+        this.warn(
+          `${JSON.stringify({ warning: 'Releasing lock' })}`,
+          this.requeueMessages.name,
+          session
+        );
+      }
+    } finally {
+      queryRunner.release();
+    }
+  }
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleEntryTiming() {
+    const session = randomUUID();
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      const delayedJourneys = await queryRunner.manager
+        .createQueryBuilder(Journey, 'journey')
+        .where(
+          'journey."journeyEntrySettings"->\'entryTiming\'->>\'type\' = :type AND journey."isActive" = true',
+          {
+            type: EntryTiming.SpecificTime,
+          }
+        )
+        .getMany();
+      await queryRunner.commitTransaction();
+    } catch (e) {
+      this.error(e, this.handleEntryTiming.name, session);
+      await queryRunner.rollbackTransaction();
+    } finally {
+      queryRunner.release();
     }
   }
 }

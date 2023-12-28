@@ -16,6 +16,8 @@ import {
 } from '../customers/schemas/customer-keys.schema';
 import { CustomersModule } from '../customers/customers.module';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { Step } from '../steps/entities/step.entity';
+import { KafkaModule } from '../kafka/kafka.module';
 
 @Module({
   imports: [
@@ -28,12 +30,13 @@ import { WebhooksService } from '../webhooks/webhooks.service';
     BullModule.registerQueue({
       name: 'customers',
     }),
-    TypeOrmModule.forFeature([Account, Audience, Installation, State]),
+    TypeOrmModule.forFeature([Account, Audience, Installation, State, Step]),
     MongooseModule.forFeature([
       { name: Customer.name, schema: CustomerSchema },
       { name: CustomerKeys.name, schema: CustomerKeysSchema },
     ]),
     forwardRef(() => CustomersModule),
+    KafkaModule,
   ],
   controllers: [SlackController],
   providers: [SlackProcessor, SlackService, WebhooksService],

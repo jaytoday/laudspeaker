@@ -1,7 +1,7 @@
 /* eslint-disable no-case-declarations */
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Inject, Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { Inject, Logger } from '@nestjs/common';
 import { Injectable } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import { Liquid } from 'liquidjs';
@@ -18,7 +18,7 @@ import {
 } from '../templates/entities/template.entity';
 import { TemplatesService } from '../templates/templates.service';
 
-@Processor('webhooks')
+@Processor('webhooks', { removeOnComplete: { age: 0, count: 0 } })
 @Injectable()
 export class WebhooksProcessor extends WorkerHost {
   private tagEngine = new Liquid();
@@ -176,10 +176,10 @@ export class WebhooksProcessor extends WorkerHost {
       }
 
       try {
-        await this.webhooksService.insertClickHouseMessages([
+        await this.webhooksService.insertMessageStatusToClickhouse([
           {
             event: 'error',
-            createdAt: new Date().toUTCString(),
+            createdAt: new Date().toISOString(),
             eventProvider: ClickHouseEventProvider.WEBHOOKS,
             messageId: '',
             audienceId: job.data.audienceId,
@@ -196,10 +196,10 @@ export class WebhooksProcessor extends WorkerHost {
       throw new Error(error);
     } else {
       try {
-        await this.webhooksService.insertClickHouseMessages([
+        await this.webhooksService.insertMessageStatusToClickhouse([
           {
             event: 'sent',
-            createdAt: new Date().toUTCString(),
+            createdAt: new Date().toISOString(),
             eventProvider: ClickHouseEventProvider.WEBHOOKS,
             messageId: '',
             audienceId: job.data.audienceId,

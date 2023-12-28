@@ -1,4 +1,4 @@
-import { WorkerHost, Processor } from '@nestjs/bullmq';
+import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { LoggerService, Injectable, Inject } from '@nestjs/common';
 import { WebClient } from '@slack/web-api';
@@ -10,7 +10,7 @@ import {
 } from '../webhooks/webhooks.service';
 
 @Injectable()
-@Processor('slack')
+@Processor('slack', { removeOnComplete: { age: 0, count: 0 } })
 export class SlackProcessor extends WorkerHost {
   client: WebClient;
   tagEngine: Liquid;
@@ -39,11 +39,11 @@ export class SlackProcessor extends WorkerHost {
         }
       } catch (error) {
         this.logger.warn("Merge tag can't be used, skipping sending...");
-        await this.webhooksService.insertClickHouseMessages([
+        await this.webhooksService.insertMessageStatusToClickhouse([
           {
             userId: job.data.accountId,
             event: 'error',
-            createdAt: new Date().toUTCString(),
+            createdAt: new Date().toISOString(),
             eventProvider: ClickHouseEventProvider.SLACK,
             messageId: '',
             audienceId: job.data.args.audienceId,

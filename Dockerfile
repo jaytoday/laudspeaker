@@ -2,11 +2,15 @@
 # To run: docker run -it -p 80:80 --env-file packages/server/.env --rm laudspeaker/laudspeaker:latest
 FROM node:16 as frontend_build
 ARG EXTERNAL_URL
+ARG FRONTEND_SENTRY_AUTH_TOKEN
 ARG REACT_APP_POSTHOG_HOST
 ARG REACT_APP_POSTHOG_KEY
-ENV REACT_APP_API_BASE_URL=${EXTERNAL_URL}/api
+ARG REACT_APP_ONBOARDING_API_KEY
+ENV SENTRY_AUTH_TOKEN=${FRONTEND_SENTRY_AUTH_TOKEN}
+ENV REACT_APP_WS_BASE_URL=${EXTERNAL_URL}
 ENV REACT_APP_POSTHOG_HOST=${REACT_APP_POSTHOG_HOST}
 ENV REACT_APP_POSTHOG_KEY=${REACT_APP_POSTHOG_KEY}
+ENV REACT_APP_ONBOARDING_API_KEY=${REACT_APP_ONBOARDING_API_KEY}
 WORKDIR /app
 COPY ./packages/client/package.json /app/
 COPY ./package-lock.json /app/
@@ -16,10 +20,12 @@ RUN npm run format:client
 RUN npm run build:client
 
 FROM node:16 as backend_build
+ARG BACKEND_SENTRY_AUTH_TOKEN
+ENV SENTRY_AUTH_TOKEN=${BACKEND_SENTRY_AUTH_TOKEN}
 WORKDIR /app
 COPY --from=frontend_build /app/packages/client/package.json /app/
 COPY ./packages/server/package.json /app
-RUN npm install
+RUN npm install --legacy-peer-deps
 COPY . /app
 RUN npm run build:server
 
@@ -45,9 +51,10 @@ COPY --from=frontend_build /app/packages/client/build /app/client
 COPY --from=backend_build /app/packages/server/dist /app/dist
 COPY --from=backend_build /app/node_modules /app/node_modules
 COPY --from=backend_build /app/packages /app/packages
+COPY ./scripts /app/scripts/
 
 #Expose web port
 EXPOSE 80
 
 # Run migrations and serve app
-CMD ["sh", "-c", "clickhouse-migrations migrate && typeorm-ts-node-commonjs migration:run -d packages/server/src/data-source.ts && node dist/src/main.js"]
+CMD ["sh", "-c", "./scripts/setup_config.sh && clickhouse-migrations migrate && typeorm-ts-node-commonjs migration:run -d packages/server/src/data-source.ts && node dist/src/main.js"]

@@ -1,11 +1,11 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
 import handleDatabricks from './databricks.worker';
 import {
   Database,
   DBType,
   FrequencyUnit,
 } from '../../api/integrations/entities/database.entity';
-import { Job } from 'bullmq';
 import { Account } from '../accounts/entities/accounts.entity';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -37,7 +37,7 @@ const frequencyUnitToMsMap: Record<FrequencyUnit, number> = {
 const BATCH_SiZE = 10_000_000;
 
 @Injectable()
-@Processor('integrations')
+@Processor('integrations', { removeOnComplete: { age: 0, count: 0 } })
 export class IntegrationsProcessor extends WorkerHost {
   constructor(
     @InjectModel(Customer.name)

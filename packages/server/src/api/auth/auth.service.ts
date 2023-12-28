@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Account, PlanType } from '../accounts/entities/accounts.entity';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, QueryRunner, Repository } from 'typeorm';
 import { RegisterDto } from '../auth/dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { AuthHelper } from './auth.helper';
@@ -31,7 +31,7 @@ export class AuthService {
     private readonly logger: Logger,
     @InjectQueue('message') private readonly messageQueue: Queue,
     @InjectRepository(Account)
-    public readonly repository: Repository<Account>,
+    public readonly accountRepository: Repository<Account>,
     @InjectRepository(Verification)
     public readonly verificationRepository: Repository<Verification>,
     @InjectRepository(Recovery)
@@ -102,9 +102,15 @@ export class AuthService {
   }
 
   public async register(body: RegisterDto, session: string) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    let err;
     try {
       const { firstName, lastName, email, password }: RegisterDto = body;
-      let user: Account = await this.repository.findOne({ where: { email } });
+      let user: Account = await queryRunner.manager.findOne(Account, {
+        where: { email },
+      });
       if (user) {
         throw new HttpException(
           'This account already exists',
@@ -112,35 +118,43 @@ export class AuthService {
         );
       }
 
-      let ret: Account;
-      await this.dataSource.manager.transaction(async (transactionManager) => {
-        user = new Account();
+      user = new Account();
 
-        user.firstName = firstName;
-        user.lastName = lastName;
-        user.email = email;
-        user.password = this.helper.encodePassword(password);
-        user.apiKey = this.helper.generateApiKey();
-        user.accountCreatedAt = new Date();
-        user.plan = PlanType.FREE;
-        ret = await transactionManager.save(user);
-        await this.helper.generateDefaultData(ret, transactionManager);
+      user.firstName = firstName;
+      user.lastName = lastName;
+      user.email = email;
+      user.password = this.helper.encodePassword(password);
+      user.apiKey = this.helper.generateApiKey();
+      user.accountCreatedAt = new Date();
+      user.plan = PlanType.FREE;
+      if (process.env.EMAIL_VERIFICATION !== 'true') {
+        user.verified = true;
+      }
+      const ret = await queryRunner.manager.save(user);
+      await this.helper.generateDefaultData(ret, queryRunner, session);
 
-        user.id = ret.id;
+      user.id = ret.id;
 
-        await this.requestVerification(ret, transactionManager, session);
-      });
-
+      if (process.env.EMAIL_VERIFICATION === 'true') {
+        await this.requestVerification(ret, queryRunner, session);
+      }
+      await queryRunner.commitTransaction();
       return { ...ret, access_token: this.helper.generateToken(ret) };
     } catch (e) {
-      this.debug(e, this.register.name, session);
-      throw e;
+      err = e;
+      this.error(e, this.register.name, session);
+      await queryRunner.rollbackTransaction();
+    } finally {
+      await queryRunner.release();
+      if (err) throw err;
     }
   }
 
   public async login(body: LoginDto, session: string) {
     const { email, password }: LoginDto = body;
-    const user: Account = await this.repository.findOne({ where: { email } });
+    const user: Account = await this.accountRepository.findOne({
+      where: { email },
+    });
 
     if (!user) {
       throw new HttpException('No user found', HttpStatus.NOT_FOUND);
@@ -155,7 +169,7 @@ export class AuthService {
       throw new HttpException('No user found', HttpStatus.NOT_FOUND);
     }
 
-    const ret = await this.repository.save({
+    const ret = await this.accountRepository.save({
       ...user,
       lastLoginAt: new Date(),
     });
@@ -164,21 +178,21 @@ export class AuthService {
   }
 
   public async validateAPIKey(apiKey: string): Promise<Account | never> {
-    const user: Account = await this.repository.findOne({
+    const user: Account = await this.accountRepository.findOne({
       where: { apiKey: apiKey },
     });
     return user;
   }
 
   public async refresh(user: Account, session: string): Promise<string> {
-    this.repository.update(user.id, { lastLoginAt: new Date() });
+    this.accountRepository.update(user.id, { lastLoginAt: new Date() });
 
     return this.helper.generateToken(user);
   }
 
   public async requestVerification(
     user: Account,
-    transactionManager: EntityManager = this.dataSource.manager,
+    queryRunner: QueryRunner,
     session: string
   ) {
     let verification = new Verification();
@@ -186,20 +200,46 @@ export class AuthService {
     verification.account = user;
     verification.status = 'sent';
 
-    verification = await transactionManager.save(verification);
+    if (queryRunner)
+      verification = await queryRunner.manager.save(verification);
+    else verification = await this.verificationRepository.save(verification);
 
     const verificationLink = `${process.env.FRONTEND_URL}/verify-email/${verification.id}`;
 
-    await this.messageQueue.add('email', {
-      key: process.env.MAILGUN_API_KEY,
-      from: 'Laudspeaker',
-      domain: process.env.MAILGUN_DOMAIN,
-      email: 'noreply',
-      to: user.email,
-      subject: 'Email verification',
-      text: `Link: <a href="${verificationLink}">${verificationLink}</a>`,
-    });
-
+    if (process.env.EMAIL_VERIFICATION_PROVIDER === 'gmail') {
+      await this.messageQueue.add('email', {
+        eventProvider: 'gmail',
+        key: process.env.GMAIL_APP_CRED,
+        from: 'Laudspeaker',
+        email: process.env.GMAIL_VERIFICATION_EMAIL,
+        to: user.email,
+        subject: 'Email verification',
+        plainText:
+          'Paste the following link into your browser:' + verificationLink,
+        text: `Paste the following link into your browser: <a href="${verificationLink}">${verificationLink}</a>`,
+      });
+    } else if (process.env.EMAIL_VERIFICATION_PROVIDER === 'mailgun') {
+      await this.messageQueue.add('email', {
+        key: process.env.MAILGUN_API_KEY,
+        from: 'Laudspeaker',
+        domain: process.env.MAILGUN_DOMAIN,
+        email: 'noreply',
+        to: user.email,
+        subject: 'Email verification',
+        text: `Link: <a href="${verificationLink}">${verificationLink}</a>`,
+      });
+    } else {
+      //default is mailgun right now
+      await this.messageQueue.add('email', {
+        key: process.env.MAILGUN_API_KEY,
+        from: 'Laudspeaker',
+        domain: process.env.MAILGUN_DOMAIN,
+        email: 'noreply',
+        to: user.email,
+        subject: 'Email verification',
+        text: `Link: <a href="${verificationLink}">${verificationLink}</a>`,
+      });
+    }
     return verification;
   }
 
@@ -208,7 +248,7 @@ export class AuthService {
     verificationId: string,
     session: string
   ) {
-    const account = await this.repository.findOneBy({ id: user.id });
+    const account = await this.accountRepository.findOneBy({ id: user.id });
     if (!account)
       throw new HttpException('User not found', HttpStatus.NOT_FOUND);
 
@@ -239,6 +279,7 @@ export class AuthService {
         );
 
         foundCustomer.verified = true;
+        foundCustomer.email = email;
         await foundCustomer.save({ session: transactionSession });
       } else {
         const customer = await this.customersService.create(
@@ -271,7 +312,7 @@ export class AuthService {
     { email }: RequestResetPasswordDto,
     session: string
   ) {
-    const account = await this.repository.findOneBy({ email });
+    const account = await this.accountRepository.findOneBy({ email });
 
     if (!account)
       throw new NotFoundException('There is no account with this email');

@@ -393,6 +393,7 @@ const DEFAULT_TEMPLATES: Template[] = [
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://db.onlinewebfonts.com/c/4a10ddb94826a97967f5f6e72f24b582?family=F.PingFang-SC-Regular" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700" rel="stylesheet" type="text/css">
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700" rel="stylesheet" type="text/css">
     <div style="box-sizing: border-box;">
@@ -3245,6 +3246,72 @@ const DEFAULT_TEMPLATES: Template[] = [
     text: `<body id="i1nu"><div class="text_droppable" id="i2yf">Hey <br id="inue" draggable="true"/><br id="izpm" draggable="true"/>Welcome to . If you have any questions or feedback shoot us an email at <br id="iapj" draggable="true"/><br id="ixgi" draggable="true"/>Thanks!</div></body>`,
     style: `* { box-sizing: border-box; } body {margin: 0;}#i2yf{padding:10px;}`,
     type: TemplateType.EMAIL,
+  },
+  {
+    ...new Template(),
+    name: 'side-checklist-example',
+    type: TemplateType.CUSTOM_COMPONENT,
+    customEvents: ['1-to-2', '2-to-3', '3-to-start', 'start'],
+    customFields: {
+      fields: [
+        {
+          name: 'MainTitle',
+          type: 'String',
+          defaultValue: 'Welcome to Example',
+        },
+        {
+          name: 'step-1-title',
+          type: 'String',
+          defaultValue: 'Create a example',
+        },
+        {
+          name: 'step-1-desc',
+          type: 'String',
+          defaultValue:
+            'An introduction to "projects" and instructions on how to create them.',
+        },
+        {
+          name: 'step-1-button-text',
+          type: 'String',
+          defaultValue: 'Create a example',
+        },
+        { name: 'step-1-done', type: 'Boolean', defaultValue: 'false' },
+        {
+          name: 'step-2-title',
+          type: 'String',
+          defaultValue: 'Import contacts',
+        },
+        {
+          name: 'step-2-desc',
+          type: 'String',
+          defaultValue:
+            'An introduction to "contacts" An introduction to "contacts" An introduction to "contacts" An introduction to "contacts"An introduction to "contacts',
+        },
+        {
+          name: 'step-2-button-text',
+          type: 'String',
+          defaultValue: 'Import contacts',
+        },
+        { name: 'step-2-done', type: 'Boolean', defaultValue: 'false' },
+        {
+          name: 'step-3-title',
+          type: 'String',
+          defaultValue: 'Create a sequence',
+        },
+        {
+          name: 'step-3-desc',
+          type: 'String',
+          defaultValue:
+            'An introduction to "sequence", the value. An introduction to "sequence", the value. An introduction to "sequence", the value.',
+        },
+        {
+          name: 'step-3-button-text',
+          type: 'String',
+          defaultValue: 'Create a sequence',
+        },
+        { name: 'step-3-done', type: 'Boolean', defaultValue: 'false' },
+      ],
+    },
   },
 ];
 

@@ -7,6 +7,7 @@ import Progress from "components/Progress";
 import ApiService from "services/api.service";
 import { useNavigate } from "react-router-dom";
 import MySegment from "pages/Segment/MySegment";
+import config, { API_BASE_URL_KEY } from "config";
 
 export enum SegmentType {
   AUTOMATIC = "automatic",
@@ -55,7 +56,7 @@ const NameSegment: FC<NameSegmentProps> = ({ onSubmit }) => {
     setIsCSVLoading(true);
     try {
       const res = await fetch(
-        `${process.env.REACT_APP_API_BASE_URL}/segments/${id}/importcsv`,
+        `${config.get(API_BASE_URL_KEY)}/segments/${id}/importcsv`,
         {
           method: "POST",
           body: formData,
@@ -211,7 +212,7 @@ const NameSegment: FC<NameSegmentProps> = ({ onSubmit }) => {
                   placeholder={"Enter name"}
                   name="name"
                   id="name"
-                  className="w-full px-[16px] py-[15px] bg-[#fff] border-[1px] border-[#D1D5DB] font-[Inter] text-[16px] "
+                  className="w-full px-[16px] py-[15px] bg-[#fff] border border-[#D1D5DB] font-[Inter] text-[16px] "
                   onChange={handleSegmentFormChange}
                 />
               </div>
@@ -222,7 +223,7 @@ const NameSegment: FC<NameSegmentProps> = ({ onSubmit }) => {
                   placeholder={"Enter description"}
                   name="description"
                   id="description"
-                  className="w-full px-[16px] py-[15px] bg-[#fff] border-[1px] border-[#D1D5DB] font-[Inter] text-[16px] "
+                  className="w-full px-[16px] py-[15px] bg-[#fff] border border-[#D1D5DB] font-[Inter] text-[16px] "
                   onChange={handleSegmentFormChange}
                 />
               </div>

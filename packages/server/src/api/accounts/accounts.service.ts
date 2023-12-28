@@ -22,8 +22,19 @@ import { RemoveAccountDto } from './dto/remove-account.dto';
 import { InjectConnection } from '@nestjs/mongoose';
 import mongoose, { ClientSession } from 'mongoose';
 import { WebhooksService } from '../webhooks/webhooks.service';
-import * as admin from 'firebase-admin';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+import { JourneysService } from '../journeys/journeys.service';
+import { TemplatesService } from '../templates/templates.service';
+import {
+  PushPlatforms,
+  TemplateType,
+} from '../templates/entities/template.entity';
+import onboardingJourneyFixtures from './onboarding-journey';
+import { StepsService } from '../steps/steps.service';
+import { StepType } from '../steps/types/step.interface';
+import { randomUUID } from 'crypto';
+import admin from 'firebase-admin';
+import { update } from 'lodash';
 
 @Injectable()
 export class AccountsService extends BaseJwtHelper {
@@ -39,10 +50,22 @@ export class AccountsService extends BaseJwtHelper {
     @Inject(forwardRef(() => CustomersService))
     private customersService: CustomersService,
     @Inject(forwardRef(() => AuthService)) private authService: AuthService,
+    @Inject(forwardRef(() => JourneysService))
+    private journeysService: JourneysService,
+    @Inject(forwardRef(() => TemplatesService))
+    private templatesService: TemplatesService,
+    @Inject(forwardRef(() => StepsService))
+    private stepsService: StepsService,
     @InjectConnection() private readonly connection: mongoose.Connection,
     private webhookService: WebhooksService
   ) {
     super();
+    if (
+      process.env.ONBOARDING_ACCOUNT_EMAIL &&
+      process.env.ONBOARDING_ACCOUNT_API_KEY &&
+      process.env.ONBOARDING_ACCOUNT_PASSWORD
+    )
+      this.createOnboadingAccount();
   }
 
   log(message, method, session, user = 'ANONYMOUS') {
@@ -157,19 +180,12 @@ export class AccountsService extends BaseJwtHelper {
           updateUserDto.sendingDomain
         );
       } catch (e) {
-        this.logger.error(e);
-        throw new BadRequestException(
-          'There is something wrong with your mailgun'
-        );
+        this.error(e, this.update.name, session);
+        throw e;
       }
     }
 
-    if (
-      updateUserDto.sendgridFromEmail &&
-      updateUserDto.sendgridApiKey &&
-      (oldUser.sendgridFromEmail !== updateUserDto.sendgridFromEmail ||
-        oldUser.sendgridApiKey !== updateUserDto.sendgridApiKey)
-    ) {
+    if (updateUserDto.sendgridFromEmail && updateUserDto.sendgridApiKey) {
       try {
         this.sgMailService.setApiKey(updateUserDto.sendgridApiKey);
         await this.sgMailService.send({
@@ -208,9 +224,11 @@ export class AccountsService extends BaseJwtHelper {
         });
         verificationKey = body.public_key;
       } catch (e) {
-        throw new BadRequestException(
-          'There is something wrong with your sendgrid account. Check if your email is verified'
-        );
+        this.error(e, this.update.name, session, oldUser.email);
+        throw e;
+        // throw new BadRequestException(
+        //   'There is something wrong with your sendgrid account. Check if your email is verified'
+        // );
       }
     }
 
@@ -286,6 +304,12 @@ export class AccountsService extends BaseJwtHelper {
         HttpStatus.BAD_REQUEST
       );
 
+    if (updateUserDto.pushPlatforms) {
+      const platform =
+        updateUserDto.pushPlatforms.Android || updateUserDto.pushPlatforms.iOS;
+      await this.validateFirebase(oldUser, platform.credentials, session);
+    }
+
     const { smsAccountSid, smsAuthToken, smsFrom } = updateUserDto;
 
     const smsDetails = [smsAccountSid, smsAuthToken, smsFrom];
@@ -296,36 +320,49 @@ export class AccountsService extends BaseJwtHelper {
         HttpStatus.BAD_REQUEST
       );
 
+    const queryRunner = await this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    let err;
     try {
       let updatedUser: Account;
-      await this.dataSource.manager.transaction(async (transactionManager) => {
-        for (const key of Object.keys(updateUserDto)) {
-          oldUser[key] = updateUserDto[key];
-        }
+      for (const key of Object.keys(updateUserDto)) {
+        if (key === 'pushPlatforms' && updateUserDto[key]) {
+          oldUser[key] = {
+            Android:
+              updateUserDto.pushPlatforms.Android || oldUser[key].Android,
+            iOS: updateUserDto.pushPlatforms.iOS || oldUser[key].iOS,
+          };
+        } else oldUser[key] = updateUserDto[key];
+      }
 
-        oldUser.password = password;
-        oldUser.verified = verified;
-        oldUser.sendgridVerificationKey =
-          verificationKey || oldUser.sendgridVerificationKey;
+      oldUser.password = password;
+      oldUser.verified = verified;
+      oldUser.sendgridVerificationKey =
+        verificationKey || oldUser.sendgridVerificationKey;
 
-        updatedUser = await transactionManager.save<Account>(oldUser);
+      updatedUser = await queryRunner.manager.save(oldUser);
 
-        if (needEmailUpdate)
-          await this.authService.requestVerification(
-            updatedUser,
-            transactionManager,
-            session
-          );
-      });
+      if (needEmailUpdate)
+        await this.authService.requestVerification(
+          updatedUser,
+          queryRunner,
+          session
+        );
 
       await transactionSession.commitTransaction();
+      await queryRunner.commitTransaction();
 
       return updatedUser;
     } catch (e) {
       await transactionSession.abortTransaction();
-      throw e;
+      err = e;
+      this.error(e, this.update.name, session);
+      await queryRunner.rollbackTransaction();
     } finally {
+      await queryRunner.release();
       await transactionSession.endSession();
+      if (err) throw err;
     }
   }
 
@@ -431,6 +468,182 @@ export class AccountsService extends BaseJwtHelper {
       throw e;
     } finally {
       await transactionSession.endSession();
+    }
+  }
+
+  async createOnboadingAccount() {
+    const session = 'onboarding-creation';
+    let account = await this.accountsRepository.findOneBy({
+      email: process.env.ONBOARDING_ACCOUNT_EMAIL,
+      apiKey: process.env.ONBOARDING_ACCOUNT_API_KEY,
+    });
+
+    if (!account)
+      account = await this.accountsRepository.save({
+        email: process.env.ONBOARDING_ACCOUNT_EMAIL,
+        apiKey: process.env.ONBOARDING_ACCOUNT_API_KEY,
+        password: this.authService.helper.encodePassword(
+          process.env.ONBOARDING_ACCOUNT_PASSWORD
+        ),
+        verified: true,
+      });
+
+    let trackerTemplate = await this.templatesService.findOne(
+      account,
+      'onboarding-template',
+      session
+    );
+
+    if (!trackerTemplate) {
+      trackerTemplate = await this.templatesService.create(
+        account,
+        {
+          name: 'onboarding-template',
+          text: null,
+          style: null,
+          subject: null,
+          cc: [],
+          slackMessage: null,
+          type: TemplateType.CUSTOM_COMPONENT,
+          smsText: null,
+          pushObject: null,
+          webhookData: null,
+          modalState: null,
+          customEvents: [
+            'show-start-journey-page',
+            'show-customers-page',
+            'show-track-performance-page',
+            'onboarding-start',
+            'reset',
+            'proceed-to-drag-email-step',
+            'proceed-to-setting-panel-step',
+            'proceed-to-select-template-step',
+            'proceed-to-save-settings-step',
+            'proceed-to-trigger-step',
+            'proceed-to-modify-trigger-step',
+            'proceed-to-change-time-step',
+            'proceed-to-save-trigger-step',
+            'proceed-to-finish-step',
+            'show-create-journey-page',
+            'restart',
+          ],
+          customFields: {
+            fields: [
+              {
+                name: 'page',
+                type: 'Number',
+                defaultValue: '0',
+              },
+              {
+                name: 'step',
+                type: 'Number',
+                defaultValue: '0',
+              },
+            ],
+          },
+        },
+        session
+      );
+    }
+
+    let journey = await this.journeysService.journeysRepository.findOneBy({
+      owner: { id: account.id },
+      name: 'onboarding',
+    });
+    if (!journey) {
+      journey = await this.journeysService.create(
+        account,
+        'onboarding',
+        session
+      );
+
+      await this.journeysService.update(
+        account,
+        {
+          id: journey.id,
+          isDynamic: true,
+        },
+        session
+      );
+      await this.journeysService.updateLayout(
+        account,
+        {
+          id: journey.id,
+          nodes: await Promise.all(
+            onboardingJourneyFixtures(trackerTemplate.id).nodes.map(
+              async (node) => ({
+                ...node,
+                data: {
+                  ...node.data,
+                  stepId:
+                    (
+                      await this.stepsService.findOne(
+                        account,
+                        node.data.stepId,
+                        session
+                      )
+                    )?.id ||
+                    (node.data.type
+                      ? (
+                          await this.stepsService.insert(
+                            account,
+                            {
+                              journeyID: journey.id,
+                              type: node.data.type as StepType,
+                            },
+                            session
+                          )
+                        ).id
+                      : undefined),
+                },
+              })
+            )
+          ),
+          edges: onboardingJourneyFixtures(trackerTemplate.id).edges,
+        },
+        ''
+      );
+      await this.journeysService.start(account, journey.id, '');
+    }
+  }
+
+  async validateFirebase(
+    user: Account,
+    credentials: Express.Multer.File | JSON,
+    session: string,
+    withSave?: {
+      platform: PushPlatforms;
+    }
+  ) {
+    let content = '';
+    if ((credentials as Express.Multer.File).buffer) {
+      content = (credentials as Express.Multer.File).buffer.toString('utf-8');
+    } else {
+      content = JSON.stringify(credentials as JSON);
+    }
+
+    try {
+      const serviceAccount = JSON.parse(content);
+      const firebaseApp = admin.initializeApp(
+        {
+          credential: admin.credential.cert(serviceAccount),
+        },
+        withSave ? `${user.id};;${withSave.platform}` : undefined
+      );
+      if (!withSave) firebaseApp.delete();
+
+      return serviceAccount;
+    } catch (error) {
+      this.error(
+        error,
+        this.validateFirebase.name,
+        session,
+        (<Account>user).id
+      );
+      throw new HttpException(
+        'Error during message processing.',
+        HttpStatus.BAD_REQUEST
+      );
     }
   }
 }

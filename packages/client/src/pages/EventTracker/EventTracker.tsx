@@ -82,7 +82,7 @@ const EventTracker = () => {
   if (loading) return <Progress />;
 
   return (
-    <div className="min-h-[100vh] max-h-[100vh] px-[50px] py-[10px]">
+    <div className="px-[50px] py-[10px]">
       <div className="max-w-[300px] mb-[10px]">
         <Autocomplete
           inputId="searchName"
@@ -90,7 +90,7 @@ const EventTracker = () => {
           inputValue={searchName}
           wrapperClassNames="w-full"
           customLabelClassNames="mb-[4px]"
-          customInputClassNames="!shadow-sm !border-[1px] !border-gray-300"
+          customInputClassNames="!shadow-sm !border !border-gray-300"
           onInputChange={(e) => setSearchName(e.target.value)}
           label="Name"
           onOptionSelect={(name) => {
@@ -105,7 +105,7 @@ const EventTracker = () => {
           <div className="overflow-y-scroll max-h-[calc(100vh-160px)] px-[5px]">
             <table className="w-full bg-gray-200 rounded-md">
               <thead>
-                <tr className="border-[2px] border-gray-300 text-gray-800">
+                <tr className="border-2 border-gray-300 text-gray-800">
                   <th className="w-1/2 py-[10px]">Name</th>
                   <th className="py-[10px]">Error</th>
                 </tr>
@@ -113,7 +113,7 @@ const EventTracker = () => {
               <tbody>
                 {posthogEvents.map((posthogEvent) => (
                   <tr
-                    className={`border-[2px] border-gray-300 cursor-pointer hover:bg-cyan-100 hover:bg-opacity-30 ${
+                    className={`border-2 border-gray-300 cursor-pointer hover:bg-cyan-100 hover:bg-opacity-30 ${
                       selectedPosthogEvent === posthogEvent
                         ? "ring-cyan-700 ring-2"
                         : ""
@@ -217,16 +217,16 @@ const EventTracker = () => {
                 <path
                   d="M13.1667 1.66602L16.5 4.99935M16.5 4.99935L13.1667 8.33268M16.5 4.99935L1.5 4.99935"
                   stroke="#E5E5E5"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
               </svg>
             </div>
           </div>
         </div>
         <div className="w-1/2 px-[10px]">
-          <div className="bg-gray-200 rounded-md border-[2px] border-gray-300">
+          <div className="bg-gray-200 rounded-md border-2 border-gray-300">
             <div className="ml-[20px] text-[16px] font-bold text-gray-800 py-[10px]">
               Payload
             </div>
